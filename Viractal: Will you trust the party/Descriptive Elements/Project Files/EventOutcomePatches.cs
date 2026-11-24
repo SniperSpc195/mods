@@ -272,30 +272,34 @@ namespace DescriptiveElements
                 var vector2Type = ResolveType("UnityEngine.Vector2");
                 var objectType = ResolveType("UnityEngine.Object");
 
-                if (goType == null || canvasType == null || imageType == null || textMeshProType == null) return;
+                if (goType == null || canvasType == null || rectTransformType == null ||
+                    imageType == null || textMeshProType == null || colorType == null || vector2Type == null)
+                    throw new TypeLoadException("A required Unity UI type was not found.");
 
-                var go = goType.GetConstructor(Type.EmptyTypes).Invoke(null);
-                objectType.GetMethod("DontDestroyOnLoad")?.Invoke(null, new object[] { go });
+                var go = Plugin.CreateGameObject(goType, "DescriptiveElements_GrantToast");
+                var dontDestroy = objectType?.GetMethod("DontDestroyOnLoad",
+                    BindingFlags.Public | BindingFlags.Static, null, new[] { objectType }, null);
+                dontDestroy?.Invoke(null, new[] { go });
 
-                var canvas = goType.GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(go, new object[] { canvasType });
+                var canvas = Plugin.AddComponent(go, canvasType);
                 SetProp(canvas, "sortingOrder", 32767);
-                goType.GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(go, new object[] { graphicRaycasterType });
+                if (graphicRaycasterType != null) Plugin.AddComponent(go, graphicRaycasterType);
 
                 var panel = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToastPanel");
                 Plugin.Instance.SetParent(panel, go);
-                var rect = panel.GetType().GetMethod("GetComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { rectTransformType });
-                SetProp(rect, "anchorMin", CreateVector2(vector2Type, 0.5f, 0f));
-                SetProp(rect, "anchorMax", CreateVector2(vector2Type, 0.5f, 0f));
-                SetProp(rect, "pivot", CreateVector2(vector2Type, 0.5f, 0f));
-                SetProp(rect, "anchoredPosition", CreateVector2(vector2Type, 0f, 70f));
-                SetProp(rect, "sizeDelta", CreateVector2(vector2Type, 760f, 42f));
+                var rect = Plugin.GetComponent(panel, rectTransformType);
+                SetProp(rect, "anchorMin", Plugin.CreateVector2(vector2Type, 0.5f, 0f));
+                SetProp(rect, "anchorMax", Plugin.CreateVector2(vector2Type, 0.5f, 0f));
+                SetProp(rect, "pivot", Plugin.CreateVector2(vector2Type, 0.5f, 0f));
+                SetProp(rect, "anchoredPosition", Plugin.CreateVector2(vector2Type, 0f, 70f));
+                SetProp(rect, "sizeDelta", Plugin.CreateVector2(vector2Type, 760f, 42f));
 
-                var img = panel.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { imageType });
-                SetProp(img, "color", CreateColor(colorType, 0f, 0f, 0f, 0.8f));
+                var img = Plugin.AddComponent(panel, imageType);
+                SetProp(img, "color", Plugin.CreateColor(colorType, 0f, 0f, 0f, 0.8f));
 
                 var textGO = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToastText");
                 Plugin.Instance.SetParent(textGO, panel);
-                var txt = textGO.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(textGO, new object[] { textMeshProType });
+                var txt = Plugin.AddComponent(textGO, textMeshProType);
                 SetProp(txt, "text", $"[{classify}] {text}");
                 SetProp(txt, "fontSize", 18);
                 SetProp(txt, "color", ColorFor(classify, colorType));
@@ -305,30 +309,23 @@ namespace DescriptiveElements
             catch (Exception ex) { Plugin.Log.LogWarning($"[DE] ShowGrantToast: {ex}"); }
         }
 
-        private static object CreateVector2(Type vector2Type, float x, float y)
-        {
-            try { return vector2Type.GetConstructor(new[] { typeof(float), typeof(float) }).Invoke(new object[] { x, y }); } catch { return null; }
-        }
-
-        private static object CreateColor(Type colorType, float r, float g, float b, float a)
-        {
-            try { return colorType.GetConstructor(new[] { typeof(float), typeof(float), typeof(float), typeof(float) }).Invoke(new object[] { r, g, b, a }); } catch { return null; }
-        }
-
         private static void SetProp(object target, string propertyName, object value)
         {
+            if (target == null) throw new ArgumentNullException(nameof(target), $"Cannot set '{propertyName}' on a null object.");
             var prop = target.GetType().GetProperty(propertyName,
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-            prop?.SetValue(target, value);
+            if (prop == null || !prop.CanWrite)
+                throw new MissingMemberException(target.GetType().FullName, propertyName);
+            prop.SetValue(target, value);
         }
 
         private static object ColorFor(string classify, Type colorType)
         {
             switch (classify)
             {
-                case "good": return CreateColor(colorType, 0.7f, 1f, 0.7f, 1f);
-                case "bad": return CreateColor(colorType, 1f, 0.65f, 0.65f, 1f);
-                default: return CreateColor(colorType, 0.9f, 0.9f, 0.9f, 1f);
+                case "good": return Plugin.CreateColor(colorType, 0.7f, 1f, 0.7f, 1f);
+                case "bad": return Plugin.CreateColor(colorType, 1f, 0.65f, 0.65f, 1f);
+                default: return Plugin.CreateColor(colorType, 0.9f, 0.9f, 0.9f, 1f);
             }
         }
 
