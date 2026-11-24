@@ -17,7 +17,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.3";
+        public const string PluginVersion = "2.0.4";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -35,11 +35,11 @@ namespace DescriptiveElements
         private object _expRoot;
         private object _expPanelRect;
         private object _expText;
-        private readonly Dictionary<int, object> _expDisplays = new();
         private readonly Stopwatch _sw = Stopwatch.StartNew();
         private long _lastRefreshTicks;
         private bool _expCounterSetupAttempted;
         private bool _hasLoggedExpRefreshError;
+        private bool _hasLoggedExpRefresh;
 
         public override void Load()
         {
@@ -68,7 +68,6 @@ namespace DescriptiveElements
             if (_frameEvent != null && _frameHandler != null)
                 _frameEvent.RemoveEventHandler(null, _frameHandler);
             _harmony?.UnpatchSelf();
-            foreach (var playerIndex in _expDisplays.Keys.ToArray()) RemoveExpDisplay(playerIndex);
             if (_expRoot != null) DestroyUnityObject(_expRoot);
             Instance = null;
             return true;
@@ -181,7 +180,7 @@ namespace DescriptiveElements
             return prop.GetValue(target);
         }
 
-        private void SetProp(object target, string propertyName, object value)
+        internal static void SetProp(object target, string propertyName, object value)
         {
             if (target == null) throw new ArgumentNullException(nameof(target), $"Cannot set '{propertyName}' on a null object.");
             var prop = target.GetType().GetProperty(propertyName,
@@ -240,9 +239,9 @@ namespace DescriptiveElements
                     vector2Type == null || objectType == null)
                     throw new TypeLoadException("A required Unity UI type was not found.");
 
-                _expRoot = CreateGameObject(goType, "DescriptiveElements_ExpCounterRoot");
-
-                AddComponent(_expRoot, canvasType);
+                _expRoot = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterRoot");
+                var canvas = AddComponent(_expRoot, canvasType);
+                ConfigureOverlayCanvas(canvas);
 
                 var dontDestroy = objectType?.GetMethod("DontDestroyOnLoad",
                     BindingFlags.Public | BindingFlags.Static, null, new[] { objectType }, null);
@@ -263,9 +262,14 @@ namespace DescriptiveElements
                 var textGO = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterText");
                 SetParent(textGO, panel);
                 _expText = AddComponent(textGO, textMeshProType);
-                SetProp(_expText, "fontSize", 16);
-                SetProp(_expText, "color", CreateColor(colorType, 1f, 1f, 1f, 1f));
+                ConfigureOverlayText(_expText, CreateColor(colorType, 1f, 1f, 1f, 1f), 16f);
                 SetProp(_expText, "text", "EXP Counter");
+                var textRect = GetComponent(textGO, rectTransformType);
+                SetProp(textRect, "anchorMin", CreateVector2(vector2Type, 0f, 0f));
+                SetProp(textRect, "anchorMax", CreateVector2(vector2Type, 1f, 1f));
+                SetProp(textRect, "offsetMin", CreateVector2(vector2Type, 8f, 8f));
+                SetProp(textRect, "offsetMax", CreateVector2(vector2Type, -8f, -8f));
+                Log.LogInfo("[Descriptive Elements] EXP counter UI created on topmost screen overlay.");
             }
             catch (Exception ex)
             {
@@ -307,23 +311,18 @@ namespace DescriptiveElements
 
             var players = FindObjectsOfType("CFieldPlayer");
             Array.Sort(players, (a, b) => ((int)GetProp(a, "mIndex")).CompareTo((int)GetProp(b, "mIndex")));
-
-            var statusPanels = FindObjectsOfType("CUICharacterStatus");
+            if (!_hasLoggedExpRefresh)
+            {
+                Log.LogInfo($"[Descriptive Elements] EXP counter refresh found {players.Length} player(s).");
+                _hasLoggedExpRefresh = true;
+            }
 
             var fallbackText = new StringBuilder();
             fallbackText.AppendLine("EXP Counter");
-            var hasFallbackRows = false;
-            var anyAnchored = false;
-            int panelIdx = 0;
-            var active = new HashSet<int>();
 
             foreach (var p in players)
             {
                 var playerIndex = (int)GetProp(p, "mIndex");
-                active.Add(playerIndex);
-                object anchor = null;
-                if (panelIdx < statusPanels.Length) anchor = statusPanels[panelIdx];
-                panelIdx++;
 
                 try
                 {
@@ -338,119 +337,16 @@ namespace DescriptiveElements
                     bool haveData = need > 0;
                     string needStr = haveData ? need.ToString() : "?";
                     string name = p.GetType().GetMethod("Name", Type.EmptyTypes)?.Invoke(p, null)?.ToString() ?? "?";
-
-                    if (anchor == null)
-                    {
-                        if (_expDisplays.ContainsKey(playerIndex)) RemoveExpDisplay(playerIndex);
-                        fallbackText.AppendFormat("P{0} {1}: EXP {2} / {3}\n", playerIndex, name, exp, needStr);
-                        hasFallbackRows = true;
-                    }
-                    else
-                    {
-                        UpdateExpDisplay(playerIndex, anchor, exp, needStr, haveData);
-                        if (_expDisplays.TryGetValue(playerIndex, out var display) && display != null)
-                        {
-                            anyAnchored = true;
-                        }
-                        else
-                        {
-                            fallbackText.AppendFormat("P{0} {1}: EXP {2} / {3}\n", playerIndex, name, exp, needStr);
-                            hasFallbackRows = true;
-                        }
-                    }
+                    fallbackText.AppendFormat("P{0} {1}: EXP {2} / {3}\n", playerIndex, name, exp, needStr);
                 }
                 catch (Exception ex)
                 {
                     fallbackText.AppendFormat("P{0}: (error: {1})\n", playerIndex, ex.Message);
-                    hasFallbackRows = true;
-                    if (_expDisplays.ContainsKey(playerIndex)) RemoveExpDisplay(playerIndex);
                 }
             }
-
-            PruneExpDisplays(active);
 
             if (_expText != null)
-            {
-                SetProp(_expText, "text", hasFallbackRows || !anyAnchored ? fallbackText.ToString() : "");
-            }
-        }
-
-        private void UpdateExpDisplay(int playerIndex, object anchor, int exp, string needStr, bool haveData)
-        {
-            if (!_expDisplays.TryGetValue(playerIndex, out var disp))
-            {
-                disp = CreateExpDisplay(anchor);
-                _expDisplays[playerIndex] = disp;
-            }
-            if (disp == null) return;
-
-            if (anchor != null)
-            {
-                var transformType = GetType("UnityEngine.Transform");
-                SetParent(disp, anchor);
-
-                var rectTransformType = GetType("UnityEngine.RectTransform");
-                var rect = GetComponent(disp, rectTransformType);
-                if (rect != null)
-                {
-                    var vector2Type = GetType("UnityEngine.Vector2");
-                    SetProp(rect, "anchorMin", CreateVector2(vector2Type, 0f, 1f));
-                    SetProp(rect, "anchorMax", CreateVector2(vector2Type, 0f, 1f));
-                    SetProp(rect, "pivot", CreateVector2(vector2Type, 0f, 1f));
-                    SetProp(rect, "anchoredPosition", CreateVector2(vector2Type, 24f, -104f));
-                    SetProp(rect, "sizeDelta", CreateVector2(vector2Type, 180f, 20f));
-                }
-            }
-
-            var textProp = disp.GetType().GetProperty("text", BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-            textProp?.SetValue(disp, haveData ? $"EXP {exp} / {needStr}" : $"EXP {exp} / ?");
-        }
-
-        private object CreateExpDisplay(object parent)
-        {
-            try
-            {
-                var goType = GetType("UnityEngine.GameObject");
-                var rectTransformType = GetType("UnityEngine.RectTransform");
-                var textMeshProType = GetType("TMPro.TextMeshProUGUI");
-                var vector2Type = GetType("UnityEngine.Vector2");
-                var colorType = GetType("UnityEngine.Color");
-
-                var go = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpDisplay");
-                SetParent(go, parent);
-
-                var rect = GetComponent(go, rectTransformType);
-                SetProp(rect, "sizeDelta", CreateVector2(vector2Type, 180f, 20f));
-
-                var text = AddComponent(go, textMeshProType);
-                var textRect = GetComponent(text, rectTransformType);
-                SetProp(textRect, "anchorMin", CreateVector2(vector2Type, 0f, 0f));
-                SetProp(textRect, "anchorMax", CreateVector2(vector2Type, 1f, 1f));
-                SetProp(textRect, "offsetMin", CreateVector2(vector2Type, 0f, 0f));
-                SetProp(textRect, "offsetMax", CreateVector2(vector2Type, 0f, 0f));
-                SetProp(text, "fontSize", 14);
-                SetProp(text, "color", CreateColor(colorType, 1f, 1f, 1f, 1f));
-                SetProp(text, "text", "");
-
-                return go;
-            }
-            catch (Exception ex) { Log.LogWarning($"[DE] CreateExpDisplay failed: {ex}"); return null; }
-        }
-
-        private void PruneExpDisplays(HashSet<int> active)
-        {
-            var toRemove = new List<int>();
-            foreach (var kv in _expDisplays) if (!active.Contains(kv.Key)) toRemove.Add(kv.Key);
-            foreach (var key in toRemove) RemoveExpDisplay(key);
-        }
-
-        private void RemoveExpDisplay(int playerIndex)
-        {
-            if (_expDisplays.TryGetValue(playerIndex, out var disp) && disp != null)
-            {
-                DestroyUnityObject(disp);
-                _expDisplays.Remove(playerIndex);
-            }
+                SetProp(_expText, "text", fallbackText.ToString());
         }
 
         private object[] FindObjectsOfType(string typeName)
@@ -458,6 +354,12 @@ namespace DescriptiveElements
             var type = GetType(typeName);
             if (type == null) return Array.Empty<object>();
 
+            return FindObjectsOfType(type);
+        }
+
+        internal static object[] FindObjectsOfType(Type type)
+        {
+            if (type == null) throw new ArgumentNullException(nameof(type));
             var objectType = GetType("UnityEngine.Object");
             if (objectType == null)
                 throw new TypeLoadException("UnityEngine.Object was not found in loaded assemblies.");
@@ -485,6 +387,7 @@ namespace DescriptiveElements
             }
 
             if (found is object[] objects) return objects;
+            if (found == null) return Array.Empty<object>();
 
             var results = new List<object>();
             if (found is System.Collections.IEnumerable enumerable)
@@ -493,12 +396,11 @@ namespace DescriptiveElements
                 return results.ToArray();
             }
 
-            if (found == null) return Array.Empty<object>();
             var foundType = found.GetType();
             var length = foundType.GetProperty("Length")?.GetValue(found)
                          ?? foundType.GetProperty("Count")?.GetValue(found);
             if (length == null)
-                throw new InvalidOperationException($"FindObjectsOfType({typeName}) returned unsupported array type {foundType.FullName}.");
+                throw new InvalidOperationException($"FindObjectsOfType({type.FullName}) returned unsupported array type {foundType.FullName}.");
 
             var count = Convert.ToInt32(length);
             var indexer = foundType.GetProperty("Item");
@@ -507,6 +409,69 @@ namespace DescriptiveElements
             for (var i = 0; i < count; i++)
                 results.Add(indexer.GetValue(found, new object[] { i }));
             return results.ToArray();
+        }
+
+        internal static void ConfigureOverlayCanvas(object canvas)
+        {
+            if (canvas == null) throw new ArgumentNullException(nameof(canvas));
+            var renderMode = canvas.GetType().GetProperty("renderMode",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (renderMode == null || !renderMode.CanWrite)
+                throw new MissingMemberException(canvas.GetType().FullName, "renderMode");
+            renderMode.SetValue(canvas, Enum.Parse(renderMode.PropertyType, "ScreenSpaceOverlay"));
+            SetProp(canvas, "overrideSorting", true);
+            SetProp(canvas, "sortingOrder", 32767);
+            SetProp(canvas, "enabled", true);
+
+            var rectTransformType = GetType("UnityEngine.RectTransform");
+            var vector2Type = GetType("UnityEngine.Vector2");
+            var rect = GetComponent(canvas, rectTransformType);
+            if (rect != null)
+            {
+                SetProp(rect, "anchorMin", CreateVector2(vector2Type, 0f, 0f));
+                SetProp(rect, "anchorMax", CreateVector2(vector2Type, 1f, 1f));
+                SetProp(rect, "offsetMin", CreateVector2(vector2Type, 0f, 0f));
+                SetProp(rect, "offsetMax", CreateVector2(vector2Type, 0f, 0f));
+            }
+        }
+
+        internal static void ConfigureOverlayText(object text, object color, float fontSize)
+        {
+            if (text == null) throw new ArgumentNullException(nameof(text));
+            var fontProperty = text.GetType().GetProperty("font",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (fontProperty?.CanWrite == true)
+            {
+                var font = GetDefaultTextMeshProFont(fontProperty.PropertyType);
+                if (font != null) fontProperty.SetValue(text, font);
+                else Plugin.Log.LogWarning("No TextMeshPro font asset was found; overlay text may not render.");
+            }
+
+            SetProp(text, "fontSize", fontSize);
+            SetProp(text, "color", color);
+            var raycastTarget = text.GetType().GetProperty("raycastTarget",
+                BindingFlags.Public | BindingFlags.Instance);
+            if (raycastTarget?.CanWrite == true) raycastTarget.SetValue(text, false);
+        }
+
+        private static object GetDefaultTextMeshProFont(Type fontType)
+        {
+            var settingsType = GetType("TMPro.TMP_Settings");
+            var defaultFont = settingsType?.GetProperty("defaultFontAsset",
+                BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            if (defaultFont != null && fontType.IsInstanceOfType(defaultFont))
+                return defaultFont;
+
+            var textType = GetType("TMPro.TextMeshProUGUI");
+            if (textType == null) return null;
+            foreach (var text in FindObjectsOfType(textType))
+            {
+                var font = text?.GetType().GetProperty("font",
+                    BindingFlags.Public | BindingFlags.Instance)?.GetValue(text);
+                if (font != null && fontType.IsInstanceOfType(font))
+                    return font;
+            }
+            return null;
         }
 
         internal static object CreateRectTransformGameObject(Type gameObjectType, Type rectTransformType, string name)

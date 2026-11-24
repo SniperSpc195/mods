@@ -287,13 +287,13 @@ namespace DescriptiveElements
                     imageType == null || textMeshProType == null || colorType == null || vector2Type == null)
                     throw new TypeLoadException("A required Unity UI type was not found.");
 
-                var go = Plugin.CreateGameObject(goType, "DescriptiveElements_GrantToast");
+                var go = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToast");
                 var dontDestroy = objectType?.GetMethod("DontDestroyOnLoad",
                     BindingFlags.Public | BindingFlags.Static, null, new[] { objectType }, null);
                 dontDestroy?.Invoke(null, new[] { go });
 
                 var canvas = Plugin.AddComponent(go, canvasType);
-                SetProp(canvas, "sortingOrder", 32767);
+                Plugin.ConfigureOverlayCanvas(canvas);
                 if (graphicRaycasterType != null) Plugin.AddComponent(go, graphicRaycasterType);
 
                 var panel = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToastPanel");
@@ -311,11 +311,16 @@ namespace DescriptiveElements
                 var textGO = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToastText");
                 Plugin.Instance.SetParent(textGO, panel);
                 var txt = Plugin.AddComponent(textGO, textMeshProType);
+                var textRect = Plugin.GetComponent(textGO, rectTransformType);
+                SetProp(textRect, "anchorMin", Plugin.CreateVector2(vector2Type, 0f, 0f));
+                SetProp(textRect, "anchorMax", Plugin.CreateVector2(vector2Type, 1f, 1f));
+                SetProp(textRect, "offsetMin", Plugin.CreateVector2(vector2Type, 10f, 4f));
+                SetProp(textRect, "offsetMax", Plugin.CreateVector2(vector2Type, -10f, -4f));
                 SetProp(txt, "text", $"[{classify}] {text}");
-                SetProp(txt, "fontSize", 18);
-                SetProp(txt, "color", ColorFor(classify, colorType));
+                Plugin.ConfigureOverlayText(txt, ColorFor(classify, colorType), 18f);
 
                 Plugin.Instance.DestroyUnityObject(go, duration);
+                Plugin.Log.LogInfo($"[Descriptive Elements] Displaying outcome toast: {text}");
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[DE] ShowGrantToast: {ex}"); }
         }

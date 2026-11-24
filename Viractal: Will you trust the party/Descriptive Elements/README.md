@@ -4,8 +4,8 @@ Mod project for **Viractal: Will you trust the party?**
 
 ## Features
 
-- **Event outcome disclosure** — Displays a toast for event grants, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral.
-- **EXP counter** — Shows each party member's current EXP and the requirement for the next level. Counters are anchored below character portraits when possible, with a configurable corner-list fallback.
+- **Event outcome disclosure** — Displays a topmost-screen toast when an event grant is applied, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral.
+- **EXP counter** — Shows each party member's current EXP and the requirement for the next level in a configurable, topmost-screen overlay.
 
 ## Compatibility
 
@@ -54,8 +54,8 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 |---|---:|---|
 | General > EnableEventOutcomes | true | Show an outcome toast when an event grant is applied. |
 | General > EnableExpCounter | true | Show the per-character EXP overlay. |
-| UI > ExpCounterX | 10 | Horizontal fallback position (screen fraction × 1000). |
-| UI > ExpCounterY | 10 | Vertical fallback position (screen fraction × 1000). |
+| UI > ExpCounterX | 10 | Horizontal overlay position (screen fraction × 1000). |
+| UI > ExpCounterY | 10 | Vertical overlay position (screen fraction × 1000). |
 | UI > GrantToastDuration | 5 | Seconds the grant toast remains visible. |
 
 ## Known limitations
@@ -63,7 +63,8 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 - Patch targets are discovered from the game's generated IL2CPP interop assemblies by type and method signature. Game updates can rename or change these targets; review `BepInEx/LogOutput.txt` for patch warnings.
 - The next-level requirement is read from `CMaster_CharLevel.GetData(level)`. If the master data is unavailable, the counter shows `?`.
 - Battle outcomes are initiated outside `CEventGrant` and are not individually itemized.
-- Portrait anchoring depends on `CUICharacterStatus`; if no panels are found, the counter uses the configured fallback position.
+- Event outcomes are reported after a choice is confirmed and the grant is applied; the mod does not currently predict outcomes beside each option before selection.
+- Pre-choice outcome previews are not implemented. The game's choice callback provides the selected index, while grants are constructed later by the event script; a safe preview needs a reliable mapping from each option to its script branch and grant data.
 - The plugin's runtime behavior still needs to be verified in-game after installing the IL2CPP loader.
 
 ## Project files
