@@ -17,7 +17,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.2";
+        public const string PluginVersion = "2.0.3";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -39,6 +39,7 @@ namespace DescriptiveElements
         private readonly Stopwatch _sw = Stopwatch.StartNew();
         private long _lastRefreshTicks;
         private bool _expCounterSetupAttempted;
+        private bool _hasLoggedExpRefreshError;
 
         public override void Load()
         {
@@ -86,7 +87,17 @@ namespace DescriptiveElements
             var now = _sw.ElapsedTicks;
             if (now - _lastRefreshTicks < Stopwatch.Frequency / 2) return;
             _lastRefreshTicks = now;
-            RefreshExpCounter();
+            try
+            {
+                RefreshExpCounter();
+                _hasLoggedExpRefreshError = false;
+            }
+            catch (Exception ex)
+            {
+                if (!_hasLoggedExpRefreshError)
+                    Log.LogError($"[{PluginName}] EXP counter refresh failed: {ex}");
+                _hasLoggedExpRefreshError = true;
+            }
         }
 
         private void BindConfig()
@@ -446,8 +457,33 @@ namespace DescriptiveElements
         {
             var type = GetType(typeName);
             if (type == null) return Array.Empty<object>();
-            var findMethod = GetType("UnityEngine.Object").GetMethod("FindObjectsOfType", new[] { typeof(Type) });
-            var found = findMethod.Invoke(null, new object[] { type });
+
+            var objectType = GetType("UnityEngine.Object");
+            if (objectType == null)
+                throw new TypeLoadException("UnityEngine.Object was not found in loaded assemblies.");
+
+            var findMethods = objectType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Where(method => method.Name == "FindObjectsOfType")
+                .ToArray();
+            var genericFind = findMethods.FirstOrDefault(method =>
+                method.IsGenericMethodDefinition && method.GetGenericArguments().Length == 1 &&
+                method.GetParameters().Length == 0);
+
+            object found;
+            if (genericFind != null)
+            {
+                found = genericFind.MakeGenericMethod(type).Invoke(null, null);
+            }
+            else
+            {
+                var typeFind = findMethods.FirstOrDefault(method =>
+                    !method.IsGenericMethod && method.GetParameters().Length == 1 &&
+                    method.GetParameters()[0].ParameterType == typeof(Type));
+                if (typeFind == null)
+                    throw new MissingMethodException(objectType.FullName, "FindObjectsOfType<T>()");
+                found = typeFind.Invoke(null, new object[] { type });
+            }
+
             if (found is object[] objects) return objects;
 
             var results = new List<object>();
@@ -458,12 +494,18 @@ namespace DescriptiveElements
             }
 
             if (found == null) return Array.Empty<object>();
-            var length = GetProp(found, "Length");
-            if (length is int count)
-            {
-                var indexer = found.GetType().GetProperty("Item");
-                for (var i = 0; i < count; i++) results.Add(indexer.GetValue(found, new object[] { i }));
-            }
+            var foundType = found.GetType();
+            var length = foundType.GetProperty("Length")?.GetValue(found)
+                         ?? foundType.GetProperty("Count")?.GetValue(found);
+            if (length == null)
+                throw new InvalidOperationException($"FindObjectsOfType({typeName}) returned unsupported array type {foundType.FullName}.");
+
+            var count = Convert.ToInt32(length);
+            var indexer = foundType.GetProperty("Item");
+            if (indexer == null)
+                throw new MissingMemberException(foundType.FullName, "Item");
+            for (var i = 0; i < count; i++)
+                results.Add(indexer.GetValue(found, new object[] { i }));
             return results.ToArray();
         }
 
