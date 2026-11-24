@@ -1,0 +1,126 @@
+{
+  "placement": "Fixed",
+  "patterns": [
+    { "id": "Pattern1", "mirrorX": false },
+    { "id": "Pattern2", "mirrorX": true }
+  ],
+  "areas": [
+    {
+      "areaId": "AREA_1300",
+      "direction": "Start",
+      "centerX": true
+    },
+    {
+      "areaId": "AREA_1310",
+      "direction": "Down",
+      "offsetX": -3
+    },
+    {
+      "areaId": "AREA_1320",
+      "direction": "Left",
+      "offsetY": 1
+    },
+    {
+      "areaId": "AREA_1321",
+      "direction": "Down",
+      "offsetX": -1
+    },
+    {
+      "areaId": "AREA_1330",
+      "direction": "Right",
+      "offsetY": -2
+    },
+    {
+      "areaId": "AREA_1340",
+      "direction": "Right",
+      "offsetY": 1
+    },
+    {
+      "areaId": "AREA_1350",
+      "direction": "Right",
+      "offsetY": 2
+    },
+    {
+      "areaId": "AREA_1351",
+      "direction": "Up",
+      "offsetX": 2
+    },
+    {
+      "areaId": "AREA_1352",
+      "direction": "Down",
+      "offsetX": 2
+    },
+    {
+      "areaId": "AREA_1360",
+      "direction": "Down"
+    },
+    {
+      "areaId": "AREA_1370",
+      "direction": "Left",
+      "offsetY": -3
+    },
+    {
+      "areaId": "AREA_1380",
+      "direction": "Left",
+      "offsetY": 1
+    },
+    {
+      "areaId": "AREA_1381",
+      "direction": "Left",
+      "centerY": true
+    },
+    {
+      "areaId": "AREA_1390",
+      "direction": "Down",
+      "offsetX": -1,
+      "centerX": true
+    }
+  ],
+  "startEndpoint": "NorthCenter",
+  "endEndpoint": "SouthCenter",
+  "endpointTolerance": 3,
+  "allowShortStartRoad": true,
+  "preserveY": true,
+  "excludedEnemyGroups": [
+    "GROUP_0110",
+    "GROUP_0111",
+    "GROUP_0112",
+    "GROUP_0113"
+  ],
+  "eventObjectRules": [
+    { "areaId": "AREA_1300", "weightLayer": 1 },
+    { "areaId": "AREA_1310", "weightLayer": 1 },
+    { "areaId": "AREA_1320", "weightLayer": 1 },
+    { "areaId": "AREA_1321", "weightLayer": 1 },
+    { "areaId": "AREA_1330", "weightLayer": 2 },
+    { "areaId": "AREA_1340", "weightLayer": 2 },
+    { "areaId": "AREA_1350", "weightLayer": 2 },
+    { "areaId": "AREA_1351", "weightLayer": 2 },
+    { "areaId": "AREA_1352", "weightLayer": 2 },
+    { "areaId": "AREA_1360", "weightLayer": 3 },
+    { "areaId": "AREA_1370", "weightLayer": 3 },
+    { "areaId": "AREA_1380", "weightLayer": 3 },
+    { "areaId": "AREA_1381", "weightLayer": 3 },
+    { "areaId": "AREA_1390", "weightLayer": 3 }
+  ],
+  "roadBarriers": [
+    {
+      "areaId": "AREA_1352",
+      "count": 1,
+      "obstacleId": "Wall_0000",
+      "enemyGroupId": "GROUP_0640",
+      "direction": "Horizontal",
+      "preferredProgressMin": 0.5,
+      "preferredProgressMax": 0.8
+    },
+    {
+      "areaId": "AREA_1380",
+      "count": 1,
+      "obstacleId": "Ruins_0012",
+      "enemyGroupId": "GROUP_0641",
+      "direction": "Vertical",
+      "preferredProgressMin": 0.3,
+      "preferredProgressMax": 0.7
+    }
+  ]
+}

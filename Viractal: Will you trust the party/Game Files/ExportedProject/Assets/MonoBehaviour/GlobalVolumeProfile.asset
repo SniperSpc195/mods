@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 250344640, guid: 57c9a3e5193e26c4b968cc86e528416d, type: 3}
+  m_Name: GlobalVolumeProfile
+  m_EditorClassIdentifier:
+  components:
+  - {fileID: 11400000, guid: 64b1453bac3ef2a458b1e8ce13849737, type: 2}
+  - {fileID: 11400000, guid: cacd9db7ab8e714488aefed7c5de1fac, type: 2}
+  - {fileID: 11400000, guid: 8cb269a89dd66f04ea1d3da79ec8b2b0, type: 2}
+  - {fileID: 11400000, guid: bfd1a3902c20782459f948258dd900a8, type: 2}
+  - {fileID: 11400000, guid: 43b7075e78ac00543bf84703c793b9f6, type: 2}
+  - {fileID: 11400000, guid: 79577ea8d00e4d544be612cb230fd6b7, type: 2}

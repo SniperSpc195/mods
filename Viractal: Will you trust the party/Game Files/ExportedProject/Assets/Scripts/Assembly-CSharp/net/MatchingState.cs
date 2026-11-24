@@ -1,0 +1,43 @@
+namespace net
+{
+	public enum MatchingState
+	{
+		Idoling = 0,
+		Opening = 1,
+		Connecting = 2,
+		Connected = 3,
+		RoomCreatingStartedup = 4,
+		RoomCreating = 5,
+		RoomSearchingStartedup = 6,
+		RoomSearching = 7,
+		FriendRoomSearchingStartedup = 8,
+		FriendRoomSearching = 9,
+		JoiningStartedup = 10,
+		Joining = 11,
+		Joined = 12,
+		ClosingJoin = 13,
+		Leaving = 14,
+		Left = 15,
+		Kicking = 16,
+		KickOut = 17,
+		Disconnecting = 18,
+		Closing = 19,
+		Broadcast = 20,
+		Broadcasting = 21,
+		Othercast = 22,
+		Othercasting = 23,
+		Unicast = 24,
+		Unicasting = 25,
+		Multicast = 26,
+		Multicasting = 27,
+		Error = 28,
+		GetFriendList = 29,
+		GetBlockList = 30,
+		CanceledByUser = 31,
+		FriendRoomSearch = 32,
+		ConnectingGame = 33,
+		ConnectedGame = 34,
+		RtcConnecting = 35,
+		RtcConnected = 36
+	}
+}

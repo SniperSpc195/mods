@@ -1,0 +1,78 @@
+public class CSteamAchievements
+{
+	public enum ID
+	{
+		FORK_PIECES_5_01 = 0,
+		FORK_PIECES_10_02 = 1,
+		FORK_UNLOCK_10_03 = 2,
+		FORK_UNLOCK_20_04 = 3,
+		FORK_UNLOCK_30_05 = 4,
+		FORK_PLAY_1_06 = 5,
+		FORK_PLAY_2_07 = 6,
+		FORK_CLEAR_10_08 = 7,
+		FORK_MEMO_1_09 = 8,
+		FORK_MEMO_10_10 = 9,
+		FORK_CLEAR_STAGE1_11 = 10,
+		FORK_CLEAR_STAGE2_12 = 11,
+		FORK_CLEAR_STAGE3_13 = 12,
+		FORK_ENDING_14 = 13,
+		FORK_EAT_MUSHROOM_15 = 14,
+		FORK_RETURN_FAVOR_16 = 15,
+		FORK_HAPPY_END_17 = 16,
+		FORK_BAD_END_18 = 17,
+		FORK_SOUL_100_19 = 18,
+		FORK_SOUL_300_20 = 19,
+		FORK_SOUL_500_21 = 20,
+		FORK_SOUL_1000_22 = 21,
+		FORK_CLEAR_CHR000_23 = 22,
+		FORK_CLEAR_CHR001_24 = 23,
+		FORK_CLEAR_CHR002_25 = 24,
+		FORK_CLEAR_CHR003_26 = 25,
+		FORK_CLEAR_STAGE1_h_27 = 26,
+		FORK_CLEAR_STAGE2_h_28 = 27,
+		FORK_CLEAR_STAGE3_h_29 = 28,
+		FORK_DAMAGE_OVER_100_30 = 29,
+		FORK_CLEAR_GOLD_5000_31 = 30,
+		FORK_CLEAR_DECK_50_32 = 31,
+		FORK_CLEAR_HP_100_33 = 32,
+		FORK_CLEAR_DROPRANK_S_34 = 33,
+		FORK_CLEAR_STAGE5_35 = 34,
+		FORK_CLEAR_STAGE5_ACT2_36 = 35,
+		FORK_CLEAR_STAGE5_ACT3_37 = 36,
+		FORK_CLEAR_CHR004_38 = 37,
+		FORK_CLEAR_CHR005_39 = 38,
+		FORK_CLEAR_CHR006_40 = 39,
+		FORK_CLEAR_CHR007_41 = 40,
+		FORK_CLEAR_CHR008_42 = 41,
+		FORK_CLEAR_CHR009_43 = 42,
+		FORK_CLEAR_CHR010_44 = 43,
+		_Max = 44
+	}
+
+	private static bool m_IsCallStoreStats;
+
+	public static void Unlock(ID id)
+	{
+	}
+
+	public static bool IsUnlock(ID id)
+	{
+		return false;
+	}
+
+	public static void UnlockAll()
+	{
+	}
+
+	public static void Lock(ID id)
+	{
+	}
+
+	public static void ResetStats()
+	{
+	}
+
+	public static void Update()
+	{
+	}
+}

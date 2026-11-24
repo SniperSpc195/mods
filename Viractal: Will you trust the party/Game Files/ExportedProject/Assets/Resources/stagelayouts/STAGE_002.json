@@ -1,0 +1,37 @@
+{
+  "debugOnlyLayout": true,
+  "placement": "Preferred",
+  "areas": [
+    {
+      "direction": "Default"
+    },
+    {
+      "direction": "Left"
+    },
+    {
+      "direction": "Left"
+    },
+    {
+      "direction": "Up"
+    },
+    {
+      "direction": "Up"
+    },
+    {
+      "direction": "Right",
+      "required": true,
+      "alignBottom": true
+    }
+  ],
+  "resetBounds": true,
+  "shiftAreaOrigins": true,
+  "preserveY": true,
+  "centerLand": true,
+  "centerOffsetY": 2,
+  "excludedEnemyGroups": [
+    "GROUP_0110",
+    "GROUP_0111",
+    "GROUP_0112",
+    "GROUP_0113"
+  ]
+}

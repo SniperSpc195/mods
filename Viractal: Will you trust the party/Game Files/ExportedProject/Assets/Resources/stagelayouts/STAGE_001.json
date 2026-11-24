@@ -1,0 +1,29 @@
+{
+  "debugOnlyLayout": true,
+  "placement": "Preferred",
+  "areas": [
+    {
+      "direction": "Default"
+    },
+    {
+      "direction": "Left"
+    },
+    {
+      "direction": "Left"
+    },
+    {
+      "direction": "Up"
+    },
+    {
+      "direction": "Up"
+    },
+    {
+      "direction": "Right",
+      "required": true,
+      "alignBottom": true
+    }
+  ],
+  "resetBounds": true,
+  "shiftAreaOrigins": true,
+  "topPadding": 6
+}

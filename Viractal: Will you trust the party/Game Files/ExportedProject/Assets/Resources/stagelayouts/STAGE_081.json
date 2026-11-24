@@ -1,0 +1,55 @@
+{
+  "placement": "Fixed",
+  "areas": [
+    {
+      "areaId": "AREA_1300",
+      "direction": "Start",
+      "centerX": true
+    },
+    {
+      "areaId": "AREA_1310",
+      "direction": "Down",
+      "centerX": true
+    },
+    {
+      "areaId": "AREA_1320",
+      "direction": "Left"
+    },
+    {
+      "areaId": "AREA_1330",
+      "direction": "Down"
+    },
+    {
+      "areaId": "AREA_1340",
+      "direction": "Right"
+    },
+    {
+      "areaId": "AREA_1350",
+      "direction": "Right"
+    },
+    {
+      "areaId": "AREA_1360",
+      "direction": "Down"
+    },
+    {
+      "areaId": "AREA_1370",
+      "direction": "Left"
+    },
+    {
+      "areaId": "AREA_1380",
+      "direction": "Down",
+      "centerX": true
+    }
+  ],
+  "startEndpoint": "NorthCenter",
+  "endEndpoint": "SouthCenter",
+  "endpointTolerance": 3,
+  "allowShortStartRoad": true,
+  "preserveY": true,
+  "excludedEnemyGroups": [
+    "GROUP_0110",
+    "GROUP_0111",
+    "GROUP_0112",
+    "GROUP_0113"
+  ]
+}
