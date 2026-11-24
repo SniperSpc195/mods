@@ -28,6 +28,7 @@ namespace DescriptiveElements
                 return;
             }
 
+            var patchedCount = 0;
             foreach (var method in grantType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                          .Where(candidate => candidate.Name == "Start"))
             {
@@ -37,13 +38,13 @@ namespace DescriptiveElements
                     parameters[1].ParameterType == typeof(int) &&
                     parameters[2].ParameterType == typeof(int))
                 {
-                    Patch(harmony, method, nameof(Prefix_Grant_Int), true);
+                    if (Patch(harmony, method, nameof(Prefix_Grant_Int), true)) patchedCount++;
                 }
                 else if (parameters.Length == 2 &&
                          parameters[0].ParameterType == typeParam &&
                          IsCollectionType(parameters[1].ParameterType))
                 {
-                    Patch(harmony, method, nameof(Prefix_Grant_List), true);
+                    if (Patch(harmony, method, nameof(Prefix_Grant_List), true)) patchedCount++;
                 }
             }
 
@@ -54,8 +55,10 @@ namespace DescriptiveElements
                 if (parameters.Length == 2 &&
                     IsCollectionType(parameters[0].ParameterType) &&
                     IsCollectionType(parameters[1].ParameterType))
-                    Patch(harmony, method, nameof(Prefix_StartDroprank), true);
+                    if (Patch(harmony, method, nameof(Prefix_StartDroprank), true)) patchedCount++;
             }
+            if (patchedCount == 0)
+                Plugin.Log.LogWarning("[Descriptive Elements] No CEventGrant.Start or StartDroprank overloads matched.");
 
             var choicesType = ResolveType("CEventChoices");
             if (choicesType != null)
@@ -67,6 +70,12 @@ namespace DescriptiveElements
                 if (decision != null) Patch(harmony, decision, nameof(Postfix_CbDecision), false);
                 else Plugin.Log.LogWarning("[Descriptive Elements] Patch target not found: CEventChoices.CbDecision");
             }
+            else
+            {
+                Plugin.Log.LogWarning("[Descriptive Elements] CEventChoices type not found; choice tracking skipped.");
+            }
+
+            Plugin.Log.LogInfo($"[Descriptive Elements] Patched {patchedCount} event-grant method(s).");
         }
 
         private static bool IsCollectionType(Type type)
@@ -75,19 +84,21 @@ namespace DescriptiveElements
                    type.Name.IndexOf("List", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static void Patch(Harmony harmony, MethodInfo method, string handlerName, bool isPrefix)
+        private static bool Patch(Harmony harmony, MethodInfo method, string handlerName, bool isPrefix)
         {
             var handler = typeof(EventOutcomePatches).GetMethod(handlerName,
                 BindingFlags.NonPublic | BindingFlags.Static);
             if (handler == null)
             {
                 Plugin.Log.LogError($"[Descriptive Elements] Patch handler not found: {handlerName}");
-                return;
+                return false;
             }
             if (isPrefix)
                 harmony.Patch(method, prefix: new HarmonyMethod(handler));
             else
                 harmony.Patch(method, postfix: new HarmonyMethod(handler));
+            Plugin.Log.LogInfo($"[Descriptive Elements] Patched {method.DeclaringType?.Name}.{method.Name}({string.Join(", ", method.GetParameters().Select(parameter => parameter.ParameterType.Name))}).");
+            return true;
         }
 
         private static bool Prefix_Grant_Int(object __instance, object[] __args)

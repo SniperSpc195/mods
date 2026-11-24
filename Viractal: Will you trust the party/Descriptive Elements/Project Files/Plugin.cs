@@ -17,7 +17,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.1";
+        public const string PluginVersion = "2.0.2";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -471,10 +471,54 @@ namespace DescriptiveElements
         {
             if (gameObjectType == null) throw new TypeLoadException("UnityEngine.GameObject was not found.");
             if (rectTransformType == null) throw new TypeLoadException("UnityEngine.RectTransform was not found.");
-            var constructor = gameObjectType.GetConstructor(new[] { typeof(string), typeof(Type[]) });
+
+            var constructor = gameObjectType.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(candidate =>
+                {
+                    var parameters = candidate.GetParameters();
+                    return parameters.Length == 2 && parameters[0].ParameterType == typeof(string);
+                });
             if (constructor == null)
-                throw new MissingMethodException(gameObjectType.FullName, ".ctor(string, Type[])");
-            return constructor.Invoke(new object[] { name, new[] { rectTransformType } });
+                throw new MissingMethodException(gameObjectType.FullName, ".ctor(string, component types)");
+
+            var componentArrayType = constructor.GetParameters()[1].ParameterType;
+            object componentTypes;
+            if (componentArrayType == typeof(Type[]))
+            {
+                componentTypes = new[] { rectTransformType };
+            }
+            else if (componentArrayType.IsGenericType &&
+                     componentArrayType.GetGenericTypeDefinition().FullName ==
+                     "Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray`1")
+            {
+                var il2CppTypeFactory = GetType("Il2CppInterop.Runtime.Il2CppType");
+                var fromMethod = il2CppTypeFactory?.GetMethod("From",
+                    BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(Type) }, null);
+                if (fromMethod == null)
+                    throw new MissingMethodException("Il2CppInterop.Runtime.Il2CppType.From(System.Type)");
+
+                var il2CppComponentType = fromMethod.Invoke(null, new object[] { rectTransformType });
+                var elementType = componentArrayType.GetGenericArguments()[0];
+                if (il2CppComponentType == null || !elementType.IsInstanceOfType(il2CppComponentType))
+                    throw new InvalidCastException($"The IL2CPP type wrapper is not compatible with {elementType.FullName}.");
+
+                var arrayConstructor = componentArrayType.GetConstructor(new[] { typeof(long) });
+                if (arrayConstructor == null)
+                    throw new MissingMethodException(componentArrayType.FullName, ".ctor(long)");
+                componentTypes = arrayConstructor.Invoke(new object[] { 1L });
+
+                var indexer = componentArrayType.GetProperty("Item");
+                if (indexer?.CanWrite != true)
+                    throw new MissingMemberException(componentArrayType.FullName, "Item");
+                indexer.SetValue(componentTypes, il2CppComponentType, new object[] { 0 });
+            }
+            else
+            {
+                throw new MissingMethodException(gameObjectType.FullName,
+                    $".ctor(string, {componentArrayType.FullName})");
+            }
+
+            return constructor.Invoke(new[] { (object)name, componentTypes });
         }
 
         internal static object CreateGameObject(Type gameObjectType, string name)
