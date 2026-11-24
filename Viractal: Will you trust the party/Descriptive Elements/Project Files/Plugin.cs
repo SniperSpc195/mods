@@ -1,21 +1,23 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 
 namespace DescriptiveElements
 {
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
-    public class Plugin : BaseUnityPlugin
+    public class Plugin : BasePlugin
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "2.0.0";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -27,16 +29,19 @@ namespace DescriptiveElements
         internal ConfigEntry<float> GrantToastDuration { get; private set; }
 
         private Harmony _harmony;
+        private EventInfo _frameEvent;
+        private Delegate _frameHandler;
         private object _expRoot;
+        private object _expPanelRect;
         private object _expText;
         private readonly Dictionary<int, object> _expDisplays = new();
         private readonly Stopwatch _sw = Stopwatch.StartNew();
         private long _lastRefreshTicks;
 
-        private void Awake()
+        public override void Load()
         {
             Instance = this;
-            Log = Logger;
+            Log = base.Log;
             BindConfig();
 
             _harmony = new Harmony(PluginGUID);
@@ -50,17 +55,26 @@ namespace DescriptiveElements
                 Log.LogError($"[{PluginName}] Failed to apply Harmony patches: {ex}");
             }
 
-            if (EnableExpCounter.Value) SetupExpCounter();
+            if (EnableExpCounter.Value)
+            {
+                SetupExpCounter();
+                RegisterFrameCallback();
+            }
             Log.LogInfo($"[{PluginName}] v{PluginVersion} initialization complete.");
         }
 
-        private void OnDestroy()
+        public override bool Unload()
         {
+            if (_frameEvent != null && _frameHandler != null)
+                _frameEvent.RemoveEventHandler(null, _frameHandler);
             _harmony?.UnpatchSelf();
+            foreach (var playerIndex in _expDisplays.Keys.ToArray()) RemoveExpDisplay(playerIndex);
+            if (_expRoot != null) DestroyUnityObject(_expRoot);
             Instance = null;
+            return true;
         }
 
-        private void Update()
+        internal void Tick()
         {
             if (!EnableExpCounter.Value) return;
             var now = _sw.ElapsedTicks;
@@ -76,6 +90,28 @@ namespace DescriptiveElements
             ExpCounterX = Config.Bind("UI", "ExpCounterX", 10f, "Horizontal offset of the fallback EXP list (screen fraction * 1000); only used when portrait anchoring fails.");
             ExpCounterY = Config.Bind("UI", "ExpCounterY", 10f, "Vertical offset of the fallback EXP list (screen fraction * 1000); only used when portrait anchoring fails.");
             GrantToastDuration = Config.Bind("UI", "GrantToastDuration", 5f, "Seconds the grant-outcome toast stays on screen.");
+        }
+
+        private void RegisterFrameCallback()
+        {
+            try
+            {
+                var applicationType = GetType("UnityEngine.Application");
+                _frameEvent = applicationType?.GetEvent("onBeforeRender",
+                    BindingFlags.Public | BindingFlags.Static);
+                var tickMethod = typeof(Plugin).GetMethod(nameof(Tick),
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                if (_frameEvent?.EventHandlerType == null || tickMethod == null)
+                    throw new MissingMemberException("UnityEngine.Application.onBeforeRender");
+
+                _frameHandler = Delegate.CreateDelegate(_frameEvent.EventHandlerType, this, tickMethod);
+                _frameEvent.AddEventHandler(null, _frameHandler);
+                Log.LogInfo("EXP counter frame callback registered.");
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"[{PluginName}] Could not register the EXP counter frame callback: {ex}");
+            }
         }
 
         private static Type GetType(string name)
@@ -156,9 +192,10 @@ namespace DescriptiveElements
 
                 objectType.GetMethod("DontDestroyOnLoad")?.Invoke(null, new object[] { _expRoot });
 
-                var panel = goType.GetConstructor(Type.EmptyTypes).Invoke(null);
-                panel.GetType().GetMethod("SetParent")?.Invoke(panel, new object[] { _expRoot, false });
-                var panelRect = panel.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { rectTransformType });
+                var panel = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterPanel");
+                SetParent(panel, _expRoot);
+                var panelRect = panel.GetType().GetMethod("GetComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { rectTransformType });
+                _expPanelRect = panelRect;
                 SetProp(panelRect, "anchorMin", CreateVector2(vector2Type, 0f, 1f));
                 SetProp(panelRect, "anchorMax", CreateVector2(vector2Type, 0f, 1f));
                 SetProp(panelRect, "pivot", CreateVector2(vector2Type, 0f, 1f));
@@ -167,9 +204,8 @@ namespace DescriptiveElements
                 var panelImage = panel.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { imageType });
                 SetProp(panelImage, "color", CreateColor(colorType, 0f, 0f, 0f, 0.72f));
 
-                var textGO = goType.GetConstructor(Type.EmptyTypes).Invoke(null);
-                textGO.GetType().GetMethod("SetParent")?.Invoke(textGO, new object[] { panel, false });
-                textGO.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(textGO, new object[] { rectTransformType });
+                var textGO = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterText");
+                SetParent(textGO, panel);
                 _expText = textGO.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(textGO, new object[] { textMeshProType });
                 SetProp(_expText, "fontSize", 16);
                 SetProp(_expText, "color", CreateColor(colorType, 1f, 1f, 1f, 1f));
@@ -180,23 +216,19 @@ namespace DescriptiveElements
 
         private void ApplyFallbackPosition()
         {
-            if (_expRoot == null) return;
-            var rectTransformType = GetType("UnityEngine.RectTransform");
+            if (_expPanelRect == null) return;
             var screenType = GetType("UnityEngine.Screen");
-            if (rectTransformType == null || screenType == null) return;
-
-            var rootRect = _expRoot.GetType().GetMethod("GetComponent", new[] { typeof(Type) }).Invoke(_expRoot, new object[] { rectTransformType });
-            if (rootRect == null) return;
+            if (screenType == null) return;
 
             var width = (int)GetStaticProp(screenType, "width");
             var height = (int)GetStaticProp(screenType, "height");
             float fx = ExpCounterX.Value / 1000f;
             float fy = ExpCounterY.Value / 1000f;
 
-            var anchoredPositionProp = rectTransformType.GetProperty("anchoredPosition",
+            var anchoredPositionProp = _expPanelRect.GetType().GetProperty("anchoredPosition",
                 BindingFlags.Public | BindingFlags.Instance);
             var vector2Type = GetType("UnityEngine.Vector2");
-            anchoredPositionProp?.SetValue(rootRect, CreateVector2(vector2Type, width * fx, -height * fy));
+            anchoredPositionProp?.SetValue(_expPanelRect, CreateVector2(vector2Type, width * fx, -height * fy));
         }
 
         private void RefreshExpCounter()
@@ -208,14 +240,17 @@ namespace DescriptiveElements
 
             var statusPanels = FindObjectsOfType("CUICharacterStatus");
 
-            var sb = new StringBuilder();
-            sb.AppendLine("EXP Counter");
+            var fallbackText = new StringBuilder();
+            fallbackText.AppendLine("EXP Counter");
+            var hasFallbackRows = false;
+            var anyAnchored = false;
             int panelIdx = 0;
             var active = new HashSet<int>();
 
             foreach (var p in players)
             {
-                active.Add((int)GetProp(p, "mIndex"));
+                var playerIndex = (int)GetProp(p, "mIndex");
+                active.Add(playerIndex);
                 object anchor = null;
                 if (panelIdx < statusPanels.Length) anchor = statusPanels[panelIdx];
                 panelIdx++;
@@ -234,13 +269,31 @@ namespace DescriptiveElements
                     string needStr = haveData ? need.ToString() : "?";
                     string name = p.GetType().GetMethod("Name", Type.EmptyTypes)?.Invoke(p, null)?.ToString() ?? "?";
 
-                    sb.AppendFormat("P{0} {1}: EXP {2} / {3}\n", GetProp(p, "mIndex"), name, exp, needStr);
-                    UpdateExpDisplay((int)GetProp(p, "mIndex"), anchor, exp, needStr, haveData);
+                    if (anchor == null)
+                    {
+                        if (_expDisplays.ContainsKey(playerIndex)) RemoveExpDisplay(playerIndex);
+                        fallbackText.AppendFormat("P{0} {1}: EXP {2} / {3}\n", playerIndex, name, exp, needStr);
+                        hasFallbackRows = true;
+                    }
+                    else
+                    {
+                        UpdateExpDisplay(playerIndex, anchor, exp, needStr, haveData);
+                        if (_expDisplays.TryGetValue(playerIndex, out var display) && display != null)
+                        {
+                            anyAnchored = true;
+                        }
+                        else
+                        {
+                            fallbackText.AppendFormat("P{0} {1}: EXP {2} / {3}\n", playerIndex, name, exp, needStr);
+                            hasFallbackRows = true;
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
-                    sb.AppendFormat("P{0}: (error: {1})\n", GetProp(p, "mIndex"), ex.Message);
-                    if (_expDisplays.ContainsKey((int)GetProp(p, "mIndex"))) RemoveExpDisplay((int)GetProp(p, "mIndex"));
+                    fallbackText.AppendFormat("P{0}: (error: {1})\n", playerIndex, ex.Message);
+                    hasFallbackRows = true;
+                    if (_expDisplays.ContainsKey(playerIndex)) RemoveExpDisplay(playerIndex);
                 }
             }
 
@@ -248,8 +301,7 @@ namespace DescriptiveElements
 
             if (_expText != null)
             {
-                bool anyAnchored = _expDisplays.Count > 0;
-                SetProp(_expText, "text", anyAnchored ? "" : sb.ToString());
+                SetProp(_expText, "text", hasFallbackRows || !anyAnchored ? fallbackText.ToString() : "");
             }
         }
 
@@ -265,7 +317,7 @@ namespace DescriptiveElements
             if (anchor != null)
             {
                 var transformType = GetType("UnityEngine.Transform");
-                disp.GetType().GetMethod("SetParent", new[] { transformType, typeof(bool) })?.Invoke(disp, new object[] { anchor, false });
+                SetParent(disp, anchor);
 
                 var rectTransformType = GetType("UnityEngine.RectTransform");
                 var rect = disp.GetType().GetMethod("GetComponent", new[] { typeof(Type) }).Invoke(disp, new object[] { rectTransformType });
@@ -294,10 +346,10 @@ namespace DescriptiveElements
                 var vector2Type = GetType("UnityEngine.Vector2");
                 var colorType = GetType("UnityEngine.Color");
 
-                var go = goType.GetConstructor(Type.EmptyTypes).Invoke(null);
-                go.GetType().GetMethod("SetParent")?.Invoke(go, new object[] { parent, false });
+                var go = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpDisplay");
+                SetParent(go, parent);
 
-                var rect = go.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(go, new object[] { rectTransformType });
+                var rect = go.GetType().GetMethod("GetComponent", new[] { typeof(Type) }).Invoke(go, new object[] { rectTransformType });
                 SetProp(rect, "sizeDelta", CreateVector2(vector2Type, 180f, 20f));
 
                 var text = go.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(go, new object[] { textMeshProType });
@@ -326,8 +378,7 @@ namespace DescriptiveElements
         {
             if (_expDisplays.TryGetValue(playerIndex, out var disp) && disp != null)
             {
-                var goType = GetType("UnityEngine.GameObject");
-                goType.GetMethod("Destroy", new[] { goType })?.Invoke(null, new object[] { disp });
+                DestroyUnityObject(disp);
                 _expDisplays.Remove(playerIndex);
             }
         }
@@ -337,7 +388,60 @@ namespace DescriptiveElements
             var type = GetType(typeName);
             if (type == null) return Array.Empty<object>();
             var findMethod = GetType("UnityEngine.Object").GetMethod("FindObjectsOfType", new[] { typeof(Type) });
-            return (object[])findMethod.Invoke(null, new object[] { type });
+            var found = findMethod.Invoke(null, new object[] { type });
+            if (found is object[] objects) return objects;
+
+            var results = new List<object>();
+            if (found is System.Collections.IEnumerable enumerable)
+            {
+                foreach (var item in enumerable) results.Add(item);
+                return results.ToArray();
+            }
+
+            if (found == null) return Array.Empty<object>();
+            var length = GetProp(found, "Length");
+            if (length is int count)
+            {
+                var indexer = found.GetType().GetProperty("Item");
+                for (var i = 0; i < count; i++) results.Add(indexer.GetValue(found, new object[] { i }));
+            }
+            return results.ToArray();
+        }
+
+        internal static object CreateRectTransformGameObject(Type gameObjectType, Type rectTransformType, string name)
+        {
+            var constructor = gameObjectType.GetConstructor(new[] { typeof(string), typeof(Type[]) });
+            if (constructor == null)
+                throw new MissingMethodException(gameObjectType.FullName, ".ctor(string, Type[])");
+            return constructor.Invoke(new object[] { name, new[] { rectTransformType } });
+        }
+
+        internal void SetParent(object child, object parent)
+        {
+            var childTransform = GetProp(child, "transform") ?? child;
+            var parentTransform = GetProp(parent, "transform") ?? parent;
+            var transformType = childTransform.GetType();
+            var method = transformType.GetMethod("SetParent", new[] { parentTransform.GetType(), typeof(bool) })
+                ?? transformType.GetMethods().FirstOrDefault(candidate =>
+                    candidate.Name == "SetParent" &&
+                    candidate.GetParameters().Length == 2 &&
+                    candidate.GetParameters()[1].ParameterType == typeof(bool));
+            if (method == null) throw new MissingMethodException(transformType.FullName, "SetParent");
+            method.Invoke(childTransform, new[] { parentTransform, (object)false });
+        }
+
+        internal void DestroyUnityObject(object unityObject, float delay = 0f)
+        {
+            var objectType = GetType("UnityEngine.Object");
+            var method = objectType?.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(candidate =>
+                {
+                    if (candidate.Name != "Destroy") return false;
+                    var parameters = candidate.GetParameters();
+                    return parameters.Length == 2 && parameters[1].ParameterType == typeof(float);
+                });
+            if (method == null) throw new MissingMethodException(objectType?.FullName, "Destroy");
+            method.Invoke(null, new[] { unityObject, (object)delay });
         }
     }
 }

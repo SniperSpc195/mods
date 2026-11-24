@@ -2,71 +2,73 @@
 
 Mod project for **Viractal: Will you trust the party?**
 
-This folder holds the source and project files for the **Descriptive Elements** mod. The exported game files are kept separately in the sibling `Game Files` folder and are reference material, not part of this mod project.
+## Features
 
-## What this mod does
+- **Event outcome disclosure** — Displays a toast for event grants, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral.
+- **EXP counter** — Shows each party member's current EXP and the requirement for the next level. Counters are anchored below character portraits when possible, with a configurable corner-list fallback.
 
-1. **Event outcome disclosure** — When an event choice is resolved, an on-screen toast tells you exactly what the choice granted: items, gold, EXP, DP, HP, speed, drop-rank (skill/item/ability/money), conditions, abilities, etc., plus whether the outcome is generally good, bad, or neutral. The last choice index is tracked so you can tell which pick led to the grant.
-2. **EXP counter** — A per-character counter showing `EXP <current> / <required>` (current EXP and EXP required for the next level) for each party member. Each counter is anchored just below that character's portrait (top-left of the panel), small enough to be read, and allowed to overlap the portrait picture. Falls back to a compact corner list if portrait panels can't be found.
-
-## Target platform
+## Compatibility
 
 - Game: Viractal: Will you trust the party?
 - Unity: 6000.3.12f1 (Unity 6)
 - Scripting backend: IL2CPP
-- Mod loader: BepInEx 5 (IL2CPP flavour)
-- Language: C# (.NET Standard 2.0)
+- Loader: BepInEx 6 IL2CPP (Bleeding Edge build 793, Windows x64)
+- Runtime: .NET 6
 - Patching: HarmonyX
 
-## Build instructions
+The game is IL2CPP. The previous BepInEx 5 Mono package and Mono plugin entry point are not compatible with it. IL2CPP support is distributed in BepInEx Bleeding Edge builds; the checked-in `Mod Package` is the Windows x64 build.
 
-1. Install the .NET SDK (https://dotnet.microsoft.com) — this project targets `netstandard2.0`.
-2. Copy the following DLLs from the game into a `libs/` subfolder next to the `.csproj`:
-   - `<game>/BepInEx/core/BepInEx.dll`
-   - `<game>/BepInEx/core/0Harmony.dll`
-   - `<game>/Game Files/AuxiliaryFiles/GameAssemblies/UnityEngine.CoreModule.dll` (as `UnityEngine.dll`)
-3. Build (`dotnet build -c Release`). The output is `DescriptiveElements.dll`.
-4. Copy `DescriptiveElements.dll` into `<game>\BepInEx\plugins\DescriptiveElements\` (create the folder). Do **not** copy BepInEx/Harmony/UnityEngine/Assembly-CSharp — those are provided by the game/loader at runtime.
+## Install
+
+1. Back up the game folder.
+2. Remove the old Mono BepInEx installation and its Doorstop files before installing the IL2CPP build. Do not mix the old `BepInEx` folder or `winhttp.dll` with the new files.
+3. Extract the contents of `Mod Package` into the game root. It contains the official [BepInEx Unity IL2CPP Windows x64 build](https://builds.bepinex.dev/projects/bepinex_be/793/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.793%2Bdbc82f0.zip) and the built mod DLL.
+4. Run the game once and let BepInEx finish generating its IL2CPP interop assemblies. This first launch may take longer than usual; the plugin should load after generation completes.
+5. Check `BepInEx/LogOutput.txt` for the plugin's initialization message.
+
+For a native Linux game, install the matching `Unity.IL2CPP-linux-x64` BepInEx build instead of the Windows archive. For a Windows game running under Proton, use the Windows x64 package and set the Steam launch option to `WINEDLLOVERRIDES="winhttp=n,b" %command%`.
+
+## Build
+
+Install the .NET 6 SDK. The project uses the IL2CPP loader assemblies from the included `Mod Package` and resolves game APIs through reflection, so exported game assemblies are not needed to compile.
+
+From `Project Files`, run:
+
+```sh
+dotnet build -c Release
+```
+
+The build references the loader from `Mod Package/BepInEx`. To build against a separate loader installation, pass `-p:BepInExDir="/path/to/BepInEx"`. On success, the DLL is copied into `Mod Package/BepInEx/plugins/DescriptiveElements/`.
+
+On Linux, this repository's game directory contains a colon, which can break MSBuild's generated import paths with SDK 10. If that happens, use a colon-free intermediate directory:
+
+```sh
+dotnet build -c Release -p:MSBuildProjectExtensionsPath=/tmp/descriptive-elements-obj/
+```
 
 ## Configuration
 
-Config is written to `<game install>\BepInEx\config\DescriptiveElements.cfg` on first launch:
+The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first load.
 
 | Setting | Default | Meaning |
-|---|---|---|
-| General > EnableEventOutcomes | true | Show grant/outcome toast when event choices are resolved. |
-| General > EnableExpCounter | true | Show the per-character EXP counter overlay. |
-| UI > ExpCounterX | 10 | Horizontal offset of the fallback EXP list (screen fraction * 1000); only used when portrait anchoring fails. |
-| UI > ExpCounterY | 10 | Vertical offset of the fallback EXP list (screen fraction * 1000); only used when portrait anchoring fails. |
-| UI > GrantToastDuration | 5 | Seconds the grant-outcome toast stays on screen. |
-
-## How to use
-
-- Play normally. When an event choice resolves, a toast appears near the top of the screen describing what was granted.
-- The EXP counter shows `EXP <current> / <required>` for each party member, anchored just below that character's portrait; falls back to a corner list otherwise.
-- Both features can be toggled in the config file.
+|---|---:|---|
+| General > EnableEventOutcomes | true | Show an outcome toast when an event grant is applied. |
+| General > EnableExpCounter | true | Show the per-character EXP overlay. |
+| UI > ExpCounterX | 10 | Horizontal fallback position (screen fraction × 1000). |
+| UI > ExpCounterY | 10 | Vertical fallback position (screen fraction × 1000). |
+| UI > GrantToastDuration | 5 | Seconds the grant toast remains visible. |
 
 ## Known limitations
 
-- This mod was written against the decompiled signatures of `Assembly-CSharp.dll`. Method/field names are taken from the exported source, but method **bodies** are not available here, so patch targets are matched by signature only. If a game update renames a method or changes a signature, a patch may silently stop applying — check the BepInEx console/log on launch.
-- The EXP "next level" requirement is read from `CMaster_CharLevel.GetData(lv)`. If that master asset is not loaded or returns null for a level, the counter shows current level/EXP and marks "next" as unavailable.
-- "Battle" outcomes are triggered through the game's battle-launch flow rather than `CEventGrant`, so they are not individually itemized in the grant toast. The toast covers everything `CEventGrant` produces (items, gold, EXP, DP, HP, speed, drop-rank, conditions, abilities).
-- Portrait anchoring depends on finding `CUICharacterStatus` instances at runtime; if that type or its instances can't be located, counters fall back to the corner list positioned by `ExpCounterX`/`ExpCounterY`.
-- Tested only by code review against the exported source; not yet run in the target game. Verify in-game after building.
+- Patch targets are discovered from the game's generated IL2CPP interop assemblies by type and method signature. Game updates can rename or change these targets; review `BepInEx/LogOutput.txt` for patch warnings.
+- The next-level requirement is read from `CMaster_CharLevel.GetData(level)`. If the master data is unavailable, the counter shows `?`.
+- Battle outcomes are initiated outside `CEventGrant` and are not individually itemized.
+- Portrait anchoring depends on `CUICharacterStatus`; if no panels are found, the counter uses the configured fallback position.
+- The plugin's runtime behavior still needs to be verified in-game after installing the IL2CPP loader.
 
-## Project structure
+## Project files
 
-```
-Descriptive Elements/
-  README.md                 (this file)
-  Descriptive Elements.csproj
-  libs/                     (build dependencies — copy game DLLs here; not in source)
-    BepInEx.dll
-    0Harmony.dll
-    UnityEngine.dll         (game's UnityEngine.CoreModule.dll renamed)
-  Plugin.cs                 (BepInEx entry point + config + Harmony setup + EXP counter UI)
-  EventOutcomePatches.cs    (Harmony patches for CEventGrant/CEventChoices)
-```
+- `Project Files/Plugin.cs` — BepInEx IL2CPP entry point and UI logic.
+- `Project Files/EventOutcomePatches.cs` — Harmony patches for event grants and choices.
 
-Build output, machine-specific paths, and the game's proprietary assemblies are intentionally not included here.
-
+Generated build output, machine-specific paths, and exported/proprietary game assemblies are not source files and are not included.

@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using HarmonyLib;
@@ -26,34 +28,55 @@ namespace DescriptiveElements
                 return;
             }
 
-            Patch(harmony, grantType, "Start", new[] { typeParam, typeof(int), typeof(int) },
-                nameof(Prefix_Grant_Int), true);
-            Patch(harmony, grantType, "Start", new[] { typeParam, typeof(List<string>) },
-                nameof(Prefix_Grant_ListString), true);
+            foreach (var method in grantType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                         .Where(candidate => candidate.Name == "Start"))
+            {
+                var parameters = method.GetParameters();
+                if (parameters.Length == 3 &&
+                    parameters[0].ParameterType == typeParam &&
+                    parameters[1].ParameterType == typeof(int) &&
+                    parameters[2].ParameterType == typeof(int))
+                {
+                    Patch(harmony, method, nameof(Prefix_Grant_Int), true);
+                }
+                else if (parameters.Length == 2 &&
+                         parameters[0].ParameterType == typeParam &&
+                         IsCollectionType(parameters[1].ParameterType))
+                {
+                    Patch(harmony, method, nameof(Prefix_Grant_List), true);
+                }
+            }
 
-            var pairStrInt = ResolvePairStrIntType(grantType);
-            if (pairStrInt != null)
-                Patch(harmony, grantType, "Start", new[] { typeParam, typeof(List<>).MakeGenericType(pairStrInt) },
-                    nameof(Prefix_Grant_ListPair), true);
-
-            Patch(harmony, grantType, "StartDroprank", new[] { typeof(List<string>), typeof(List<int>) },
-                nameof(Prefix_StartDroprank), true);
+            foreach (var method in grantType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                         .Where(candidate => candidate.Name == "StartDroprank"))
+            {
+                var parameters = method.GetParameters();
+                if (parameters.Length == 2 &&
+                    IsCollectionType(parameters[0].ParameterType) &&
+                    IsCollectionType(parameters[1].ParameterType))
+                    Patch(harmony, method, nameof(Prefix_StartDroprank), true);
+            }
 
             var choicesType = ResolveType("CEventChoices");
             if (choicesType != null)
-                Patch(harmony, choicesType, "CbDecision", new[] { typeof(int) },
-                    nameof(Postfix_CbDecision), false);
+            {
+                var decision = choicesType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .FirstOrDefault(candidate => candidate.Name == "CbDecision" &&
+                                                 candidate.GetParameters().Length == 1 &&
+                                                 candidate.GetParameters()[0].ParameterType == typeof(int));
+                if (decision != null) Patch(harmony, decision, nameof(Postfix_CbDecision), false);
+                else Plugin.Log.LogWarning("[Descriptive Elements] Patch target not found: CEventChoices.CbDecision");
+            }
         }
 
-        private static void Patch(Harmony harmony, Type type, string methodName, Type[] paramTypes,
-            string handlerName, bool isPrefix)
+        private static bool IsCollectionType(Type type)
         {
-            var method = type.GetMethod(methodName, paramTypes);
-            if (method == null)
-            {
-                Plugin.Log.LogWarning($"[Descriptive Elements] Patch target not found: {type.Name}.{methodName}");
-                return;
-            }
+            return typeof(IEnumerable).IsAssignableFrom(type) ||
+                   type.Name.IndexOf("List", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static void Patch(Harmony harmony, MethodInfo method, string handlerName, bool isPrefix)
+        {
             var handler = typeof(EventOutcomePatches).GetMethod(handlerName,
                 BindingFlags.NonPublic | BindingFlags.Static);
             if (handler == null)
@@ -67,11 +90,14 @@ namespace DescriptiveElements
                 harmony.Patch(method, postfix: new HarmonyMethod(handler));
         }
 
-        private static bool Prefix_Grant_Int(object __instance, object typeObj, int add, int bonus)
+        private static bool Prefix_Grant_Int(object __instance, object[] __args)
         {
             if (!Plugin.Instance.EnableEventOutcomes.Value) return true;
             try
             {
+                var typeObj = __args[0];
+                var add = Convert.ToInt32(__args[1]);
+                var bonus = Convert.ToInt32(__args[2]);
                 var sb = new StringBuilder();
                 sb.Append(typeObj).Append(" +").Append(add);
                 if (bonus != 0) sb.Append(" (bonus +").Append(bonus).Append(")");
@@ -82,69 +108,56 @@ namespace DescriptiveElements
             return true;
         }
 
-        private static bool Prefix_Grant_ListString(object __instance, object typeObj, List<string> list)
+        private static bool Prefix_Grant_List(object __instance, object[] __args)
         {
             if (!Plugin.Instance.EnableEventOutcomes.Value) return true;
             try
             {
+                var typeObj = __args[0];
+                var list = EnumerateCollection(__args[1]).ToArray();
                 var sb = new StringBuilder();
                 sb.Append(typeObj);
-                if (list != null)
+                if (list.Length > 0)
                 {
-                    for (int i = 0; i < list.Count; i++)
+                    for (int i = 0; i < list.Length; i++)
                     {
                         if (i > 0) sb.Append(", ");
-                        sb.Append(ResolveItemName(list[i]));
+                        if (list[i] is string id)
+                        {
+                            sb.Append(ResolveItemName(id));
+                        }
+                        else
+                        {
+                            var pair = ReadPairStrInt(list[i]);
+                            sb.Append(ResolveItemName(pair.id));
+                            if (pair.count != 0) sb.Append(" x").Append(pair.count);
+                        }
                     }
                 }
                 else sb.Append(" (none)");
                 sb.Append(" | ").Append(PlayerInfo(__instance)).Append(ChoiceSuffix());
                 ShowGrantToast(sb.ToString(), Classify(typeObj));
             }
-            catch (Exception ex) { Plugin.Log.LogWarning($"[DE] Prefix_Grant_ListString: {ex}"); }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[DE] Prefix_Grant_List: {ex}"); }
             return true;
         }
 
-        private static bool Prefix_Grant_ListPair(object __instance, object typeObj, object listObj)
+        private static bool Prefix_StartDroprank(object __instance, object[] __args)
         {
             if (!Plugin.Instance.EnableEventOutcomes.Value) return true;
             try
             {
-                var list = listObj as IList<object>;
-                var sb = new StringBuilder();
-                sb.Append(typeObj);
-                if (list != null)
-                {
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        if (i > 0) sb.Append(", ");
-                        var pair = ReadPairStrInt(list[i]);
-                        sb.Append(ResolveItemName(pair.id));
-                        if (pair.count != 0) sb.Append(" x").Append(pair.count);
-                    }
-                }
-                else sb.Append(" (none)");
-                sb.Append(" | ").Append(PlayerInfo(__instance)).Append(ChoiceSuffix());
-                ShowGrantToast(sb.ToString(), Classify(typeObj));
-            }
-            catch (Exception ex) { Plugin.Log.LogWarning($"[DE] Prefix_Grant_ListPair: {ex}"); }
-            return true;
-        }
-
-        private static bool Prefix_StartDroprank(object __instance, List<string> names, List<int> nums)
-        {
-            if (!Plugin.Instance.EnableEventOutcomes.Value) return true;
-            try
-            {
+                var names = EnumerateCollection(__args[0]).ToArray();
+                var nums = EnumerateCollection(__args[1]).Select(value => Convert.ToInt32(value)).ToArray();
                 var sb = new StringBuilder();
                 sb.Append("DropRank");
-                if (names != null)
+                if (names.Length > 0)
                 {
-                    for (int i = 0; i < names.Count; i++)
+                    for (int i = 0; i < names.Length; i++)
                     {
                         if (i > 0) sb.Append(", ");
                         sb.Append(names[i]);
-                        if (nums != null && i < nums.Count) sb.Append(" x").Append(nums[i]);
+                        if (i < nums.Length) sb.Append(" x").Append(nums[i]);
                     }
                 }
                 else sb.Append(" (none)");
@@ -155,7 +168,7 @@ namespace DescriptiveElements
             return true;
         }
 
-        private static void Postfix_CbDecision(int cur) => _lastChoiceIndex = cur;
+        private static void Postfix_CbDecision(object[] __args) => _lastChoiceIndex = Convert.ToInt32(__args[0]);
         private static string ChoiceSuffix() => _lastChoiceIndex >= 0 ? $" | Choice #{_lastChoiceIndex}" : "";
 
         private static string PlayerInfo(object inst)
@@ -206,6 +219,32 @@ namespace DescriptiveElements
             return (id, count);
         }
 
+        private static IEnumerable<object> EnumerateCollection(object collection)
+        {
+            if (collection == null) yield break;
+
+            if (collection is IEnumerable enumerable)
+            {
+                foreach (var item in enumerable) yield return item;
+                yield break;
+            }
+
+            var type = collection.GetType();
+            var countValue = type.GetProperty("Count")?.GetValue(collection)
+                             ?? type.GetProperty("Length")?.GetValue(collection);
+            if (countValue == null) yield break;
+
+            var count = Convert.ToInt32(countValue);
+            var indexer = type.GetProperty("Item");
+            var getItem = type.GetMethod("get_Item", new[] { typeof(int) });
+            for (var index = 0; index < count; index++)
+            {
+                if (indexer != null) yield return indexer.GetValue(collection, new object[] { index });
+                else if (getItem != null) yield return getItem.Invoke(collection, new object[] { index });
+                else yield break;
+            }
+        }
+
         private static string Classify(object typeObj)
         {
             var typeStr = typeObj?.ToString() ?? "";
@@ -242,9 +281,9 @@ namespace DescriptiveElements
                 SetProp(canvas, "sortingOrder", 32767);
                 goType.GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(go, new object[] { graphicRaycasterType });
 
-                var panel = goType.GetConstructor(Type.EmptyTypes).Invoke(null);
-                panel.GetType().GetMethod("SetParent")?.Invoke(panel, new object[] { go, false });
-                var rect = panel.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { rectTransformType });
+                var panel = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToastPanel");
+                Plugin.Instance.SetParent(panel, go);
+                var rect = panel.GetType().GetMethod("GetComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { rectTransformType });
                 SetProp(rect, "anchorMin", CreateVector2(vector2Type, 0.5f, 0f));
                 SetProp(rect, "anchorMax", CreateVector2(vector2Type, 0.5f, 0f));
                 SetProp(rect, "pivot", CreateVector2(vector2Type, 0.5f, 0f));
@@ -254,15 +293,14 @@ namespace DescriptiveElements
                 var img = panel.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(panel, new object[] { imageType });
                 SetProp(img, "color", CreateColor(colorType, 0f, 0f, 0f, 0.8f));
 
-                var textGO = goType.GetConstructor(Type.EmptyTypes).Invoke(null);
-                textGO.GetType().GetMethod("SetParent")?.Invoke(textGO, new object[] { panel, false });
-                textGO.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(textGO, new object[] { rectTransformType });
+                var textGO = Plugin.CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_GrantToastText");
+                Plugin.Instance.SetParent(textGO, panel);
                 var txt = textGO.GetType().GetMethod("AddComponent", new[] { typeof(Type) }).Invoke(textGO, new object[] { textMeshProType });
                 SetProp(txt, "text", $"[{classify}] {text}");
                 SetProp(txt, "fontSize", 18);
                 SetProp(txt, "color", ColorFor(classify, colorType));
 
-                objectType.GetMethod("Destroy", new[] { goType })?.Invoke(null, new object[] { go });
+                Plugin.Instance.DestroyUnityObject(go, duration);
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[DE] ShowGrantToast: {ex}"); }
         }
@@ -305,13 +343,6 @@ namespace DescriptiveElements
         private static Type ResolveType(string name)
         {
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies()) { var t = asm.GetType(name); if (t != null) return t; }
-            return null;
-        }
-
-        private static Type ResolvePairStrIntType(Type grant)
-        {
-            foreach (var name in new[] { "PairStrInt", "Fork.Game.PairStrInt" })
-            { var t = grant.Assembly.GetType(name); if (t != null) return t; }
             return null;
         }
 
