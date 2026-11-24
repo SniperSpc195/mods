@@ -361,7 +361,28 @@ namespace DescriptiveElements
 
         private static object CallStatic(Type type, string methodName, params object[] args)
         {
-            var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            var method = type.GetMethods(flags)
+                .Where(candidate => candidate.Name == methodName && !candidate.IsGenericMethodDefinition)
+                .FirstOrDefault(candidate =>
+                {
+                    var parameters = candidate.GetParameters();
+                    if (parameters.Length != args.Length) return false;
+                    for (var index = 0; index < parameters.Length; index++)
+                    {
+                        if (args[index] == null)
+                        {
+                            if (parameters[index].ParameterType.IsValueType &&
+                                Nullable.GetUnderlyingType(parameters[index].ParameterType) == null)
+                                return false;
+                        }
+                        else if (!parameters[index].ParameterType.IsInstanceOfType(args[index]))
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
             return method?.Invoke(null, args);
         }
     }

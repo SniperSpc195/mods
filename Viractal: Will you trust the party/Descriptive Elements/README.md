@@ -5,7 +5,7 @@ Mod project for **Viractal: Will you trust the party?**
 ## Features
 
 - **Event outcome disclosure** — Displays a topmost-screen toast when an event grant is applied, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral.
-- **EXP counter** — Shows each party member's current EXP and the requirement for the next level in a configurable, topmost-screen overlay.
+- **EXP counter** — Shows each party member's current EXP and the requirement for the next level in a topmost-screen label positioned at that player's colored profile portrait.
 
 ## Compatibility
 
@@ -54,8 +54,8 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 |---|---:|---|
 | General > EnableEventOutcomes | true | Show an outcome toast when an event grant is applied. |
 | General > EnableExpCounter | true | Show the per-character EXP overlay. |
-| UI > ExpCounterX | 10 | Horizontal overlay position (screen fraction × 1000). |
-| UI > ExpCounterY | 10 | Vertical overlay position (screen fraction × 1000). |
+| UI > ExpCounterX | 10 | Horizontal offset from each profile portrait (screen fraction × 1000). |
+| UI > ExpCounterY | 10 | Vertical offset from each profile portrait (screen fraction × 1000). |
 | UI > GrantToastDuration | 5 | Seconds the grant toast remains visible. |
 
 ## Known limitations
@@ -65,6 +65,7 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 - Battle outcomes are initiated outside `CEventGrant` and are not individually itemized.
 - Event outcomes are reported after a choice is confirmed and the grant is applied; the mod does not currently predict outcomes beside each option before selection.
 - Pre-choice outcome previews are not implemented. The game's choice callback provides the selected index, while grants are constructed later by the event script; a safe preview needs a reliable mapping from each option to its script branch and grant data.
+- Portrait anchoring uses each `CFieldPlayer`'s `CFieldUI_Player.mUIFace`; if the portrait UI is unavailable, the counter uses the corresponding red/blue/green seat position.
 - The plugin's runtime behavior still needs to be verified in-game after installing the IL2CPP loader.
 
 ## Project files

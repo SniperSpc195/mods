@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -17,7 +16,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.4";
+        public const string PluginVersion = "2.0.5";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -33,13 +32,15 @@ namespace DescriptiveElements
         private Delegate _frameHandler;
         private MethodInfo _playerUpdateMethod;
         private object _expRoot;
-        private object _expPanelRect;
-        private object _expText;
+        private readonly Dictionary<int, object> _expPanels = new Dictionary<int, object>();
+        private readonly Dictionary<int, object> _expTexts = new Dictionary<int, object>();
+        private readonly HashSet<int> _expCounterErrors = new HashSet<int>();
         private readonly Stopwatch _sw = Stopwatch.StartNew();
         private long _lastRefreshTicks;
         private bool _expCounterSetupAttempted;
         private bool _hasLoggedExpRefreshError;
         private bool _hasLoggedExpRefresh;
+        private bool _hasLoggedExpAnchorFallback;
 
         public override void Load()
         {
@@ -81,7 +82,7 @@ namespace DescriptiveElements
                 _expCounterSetupAttempted = true;
                 SetupExpCounter();
             }
-            if (_expRoot == null || _expPanelRect == null || _expText == null) return;
+            if (_expRoot == null) return;
 
             var now = _sw.ElapsedTicks;
             if (now - _lastRefreshTicks < Stopwatch.Frequency / 2) return;
@@ -103,8 +104,8 @@ namespace DescriptiveElements
         {
             EnableEventOutcomes = Config.Bind("General", "EnableEventOutcomes", true, "Show a grant/outcome toast when an event choice is resolved.");
             EnableExpCounter = Config.Bind("General", "EnableExpCounter", true, "Show the per-character EXP counter overlay.");
-            ExpCounterX = Config.Bind("UI", "ExpCounterX", 10f, "Horizontal offset of the fallback EXP list (screen fraction * 1000); only used when portrait anchoring fails.");
-            ExpCounterY = Config.Bind("UI", "ExpCounterY", 10f, "Vertical offset of the fallback EXP list (screen fraction * 1000); only used when portrait anchoring fails.");
+            ExpCounterX = Config.Bind("UI", "ExpCounterX", 10f, "Horizontal EXP counter offset from each player profile (screen fraction * 1000).");
+            ExpCounterY = Config.Bind("UI", "ExpCounterY", 10f, "Vertical EXP counter offset from each player profile (screen fraction * 1000).");
             GrantToastDuration = Config.Bind("UI", "GrantToastDuration", 5f, "Seconds the grant-outcome toast stays on screen.");
         }
 
@@ -166,9 +167,9 @@ namespace DescriptiveElements
 
         private object Call(object target, string methodName, params object[] args)
         {
-            var method = target.GetType().GetMethod(methodName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-            if (method == null) { Log.LogWarning($"[DE] Method not found: {target.GetType().Name}.{methodName}"); return null; }
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+            var method = FindMethod(target.GetType(), methodName, flags, args);
+            if (method == null) { Log.LogWarning($"[DE] Method not found: {target.GetType().Name}.{methodName}({string.Join(", ", args.Select(arg => arg?.GetType().Name ?? "null"))})"); return null; }
             return method.Invoke(target, args);
         }
 
@@ -192,9 +193,35 @@ namespace DescriptiveElements
 
         private object CallStatic(Type type, string methodName, params object[] args)
         {
-            var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (method == null) { Log.LogWarning($"[DE] Static method not found: {type.Name}.{methodName}"); return null; }
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            var method = FindMethod(type, methodName, flags, args);
+            if (method == null) { Log.LogWarning($"[DE] Static method not found: {type.Name}.{methodName}({string.Join(", ", args.Select(arg => arg?.GetType().Name ?? "null"))})"); return null; }
             return method.Invoke(null, args);
+        }
+
+        private static MethodInfo FindMethod(Type type, string methodName, BindingFlags flags, object[] args)
+        {
+            return type.GetMethods(flags)
+                .Where(method => method.Name == methodName && !method.IsGenericMethodDefinition)
+                .FirstOrDefault(method =>
+                {
+                    var parameters = method.GetParameters();
+                    if (parameters.Length != args.Length) return false;
+                    for (var index = 0; index < parameters.Length; index++)
+                    {
+                        if (args[index] == null)
+                        {
+                            if (parameters[index].ParameterType.IsValueType &&
+                                Nullable.GetUnderlyingType(parameters[index].ParameterType) == null)
+                                return false;
+                        }
+                        else if (!parameters[index].ParameterType.IsInstanceOfType(args[index]))
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
         }
 
         private object GetStaticProp(Type type, string propertyName)
@@ -226,18 +253,12 @@ namespace DescriptiveElements
             {
                 var goType = GetType("UnityEngine.GameObject");
                 var canvasType = GetType("UnityEngine.Canvas");
-                var graphicRaycasterType = GetType("UnityEngine.UI.GraphicRaycaster");
                 var rectTransformType = GetType("UnityEngine.RectTransform");
-                var imageType = GetType("UnityEngine.UI.Image");
-                var textMeshProType = GetType("TMPro.TextMeshProUGUI");
-                var colorType = GetType("UnityEngine.Color");
-                var vector2Type = GetType("UnityEngine.Vector2");
                 var objectType = GetType("UnityEngine.Object");
 
                 if (goType == null || canvasType == null || rectTransformType == null ||
-                    imageType == null || textMeshProType == null || colorType == null ||
-                    vector2Type == null || objectType == null)
-                    throw new TypeLoadException("A required Unity UI type was not found.");
+                    objectType == null)
+                    throw new TypeLoadException("A required Unity UI canvas type was not found.");
 
                 _expRoot = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterRoot");
                 var canvas = AddComponent(_expRoot, canvasType);
@@ -247,29 +268,7 @@ namespace DescriptiveElements
                     BindingFlags.Public | BindingFlags.Static, null, new[] { objectType }, null);
                 dontDestroy?.Invoke(null, new[] { _expRoot });
 
-                var panel = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterPanel");
-                SetParent(panel, _expRoot);
-                var panelRect = GetComponent(panel, rectTransformType);
-                _expPanelRect = panelRect;
-                SetProp(panelRect, "anchorMin", CreateVector2(vector2Type, 0f, 1f));
-                SetProp(panelRect, "anchorMax", CreateVector2(vector2Type, 0f, 1f));
-                SetProp(panelRect, "pivot", CreateVector2(vector2Type, 0f, 1f));
-                SetProp(panelRect, "sizeDelta", CreateVector2(vector2Type, 340f, 240f));
-
-                var panelImage = AddComponent(panel, imageType);
-                SetProp(panelImage, "color", CreateColor(colorType, 0f, 0f, 0f, 0.72f));
-
-                var textGO = CreateRectTransformGameObject(goType, rectTransformType, "DescriptiveElements_ExpCounterText");
-                SetParent(textGO, panel);
-                _expText = AddComponent(textGO, textMeshProType);
-                ConfigureOverlayText(_expText, CreateColor(colorType, 1f, 1f, 1f, 1f), 16f);
-                SetProp(_expText, "text", "EXP Counter");
-                var textRect = GetComponent(textGO, rectTransformType);
-                SetProp(textRect, "anchorMin", CreateVector2(vector2Type, 0f, 0f));
-                SetProp(textRect, "anchorMax", CreateVector2(vector2Type, 1f, 1f));
-                SetProp(textRect, "offsetMin", CreateVector2(vector2Type, 8f, 8f));
-                SetProp(textRect, "offsetMax", CreateVector2(vector2Type, -8f, -8f));
-                Log.LogInfo("[Descriptive Elements] EXP counter UI created on topmost screen overlay.");
+                Log.LogInfo("[Descriptive Elements] EXP counter overlay canvas created.");
             }
             catch (Exception ex)
             {
@@ -282,33 +281,154 @@ namespace DescriptiveElements
                     }
                 }
                 _expRoot = null;
-                _expPanelRect = null;
-                _expText = null;
                 Log.LogError($"[DE] SetupExpCounter failed: {ex}");
             }
         }
 
-        private void ApplyFallbackPosition()
+        private object CreateExpCounterPanel(int playerIndex)
         {
-            if (_expPanelRect == null) return;
-            var screenType = GetType("UnityEngine.Screen");
-            if (screenType == null) return;
-
-            var width = (int)GetStaticProp(screenType, "width");
-            var height = (int)GetStaticProp(screenType, "height");
-            float fx = ExpCounterX.Value / 1000f;
-            float fy = ExpCounterY.Value / 1000f;
-
-            var anchoredPositionProp = _expPanelRect.GetType().GetProperty("anchoredPosition",
-                BindingFlags.Public | BindingFlags.Instance);
+            var goType = GetType("UnityEngine.GameObject");
+            var rectTransformType = GetType("UnityEngine.RectTransform");
+            var imageType = GetType("UnityEngine.UI.Image");
+            var textMeshProType = GetType("TMPro.TextMeshProUGUI");
+            var colorType = GetType("UnityEngine.Color");
             var vector2Type = GetType("UnityEngine.Vector2");
-            anchoredPositionProp?.SetValue(_expPanelRect, CreateVector2(vector2Type, width * fx, -height * fy));
+            if (goType == null || rectTransformType == null || imageType == null ||
+                textMeshProType == null || colorType == null || vector2Type == null)
+                throw new TypeLoadException("A required EXP label UI type was not found.");
+
+            var panel = CreateRectTransformGameObject(goType, rectTransformType, $"DescriptiveElements_ExpCounter_P{playerIndex}");
+            SetParent(panel, _expRoot);
+            var panelRect = GetComponent(panel, rectTransformType);
+            SetProp(panelRect, "anchorMin", CreateVector2(vector2Type, 0f, 0f));
+            SetProp(panelRect, "anchorMax", CreateVector2(vector2Type, 0f, 0f));
+            SetProp(panelRect, "pivot", CreateVector2(vector2Type, 0.5f, 0.5f));
+            SetProp(panelRect, "sizeDelta", CreateVector2(vector2Type, 190f, 30f));
+
+            var panelImage = AddComponent(panel, imageType);
+            var panelColor = playerIndex switch
+            {
+                0 => CreateColor(colorType, 0.75f, 0.12f, 0.12f, 0.88f),
+                1 => CreateColor(colorType, 0.12f, 0.35f, 0.78f, 0.88f),
+                2 => CreateColor(colorType, 0.12f, 0.58f, 0.2f, 0.88f),
+                _ => CreateColor(colorType, 0.12f, 0.12f, 0.12f, 0.88f)
+            };
+            SetProp(panelImage, "color", panelColor);
+
+            var textGO = CreateRectTransformGameObject(goType, rectTransformType, $"DescriptiveElements_ExpCounterText_P{playerIndex}");
+            SetParent(textGO, panel);
+            var text = AddComponent(textGO, textMeshProType);
+            var textRect = GetComponent(textGO, rectTransformType);
+            SetProp(textRect, "anchorMin", CreateVector2(vector2Type, 0f, 0f));
+            SetProp(textRect, "anchorMax", CreateVector2(vector2Type, 1f, 1f));
+            SetProp(textRect, "offsetMin", CreateVector2(vector2Type, 5f, 2f));
+            SetProp(textRect, "offsetMax", CreateVector2(vector2Type, -5f, -2f));
+            ConfigureOverlayText(text, CreateColor(colorType, 1f, 1f, 1f, 1f), 14f);
+
+            _expPanels[playerIndex] = panel;
+            _expTexts[playerIndex] = text;
+            return panelRect;
+        }
+
+        private void UpdateExpCounterPosition(object player, int playerIndex)
+        {
+            if (!_expPanels.TryGetValue(playerIndex, out var panel) || panel == null) return;
+
+            var screenType = GetType("UnityEngine.Screen");
+            var vector2Type = GetType("UnityEngine.Vector2");
+            if (screenType == null || vector2Type == null)
+                throw new TypeLoadException("UnityEngine.Screen or Vector2 was not found.");
+
+            var width = Convert.ToSingle(GetStaticProp(screenType, "width"));
+            var height = Convert.ToSingle(GetStaticProp(screenType, "height"));
+            var x = width * (playerIndex switch { 0 => 0.07f, 1 => 0.308f, 2 => 0.545f, _ => 0.07f });
+            var y = height * 0.245f;
+
+            try
+            {
+                var easyUI = GetProp(player, "mEasyUI");
+                var faceImage = easyUI == null ? null : GetProp(easyUI, "mUIFace");
+                if (faceImage != null)
+                {
+                    var rectTransformType = GetType("UnityEngine.RectTransform");
+                    var faceRect = GetComponent(faceImage, rectTransformType);
+                    if (faceRect == null)
+                        throw new InvalidOperationException("The player's profile image has no RectTransform.");
+                    var worldPosition = GetProp(faceRect, "position");
+                    var screenPosition = WorldToScreenPoint(faceImage, worldPosition);
+                    if (screenPosition != null)
+                    {
+                        x = GetVectorComponent(screenPosition, "x");
+                        y = GetVectorComponent(screenPosition, "y") + 42f;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_hasLoggedExpAnchorFallback)
+                    Log.LogWarning($"[{PluginName}] Could not anchor EXP labels to player portraits; using seat positions: {ex}");
+                _hasLoggedExpAnchorFallback = true;
+            }
+
+            x += width * ExpCounterX.Value / 1000f;
+            y += height * ExpCounterY.Value / 1000f;
+            var rect = GetComponent(panel, GetType("UnityEngine.RectTransform"));
+            SetProp(rect, "anchoredPosition", CreateVector2(vector2Type, x, y));
+        }
+
+        private object WorldToScreenPoint(object component, object worldPosition)
+        {
+            if (worldPosition == null) return null;
+            var utilityType = GetType("UnityEngine.RectTransformUtility");
+            var cameraType = GetType("UnityEngine.Camera");
+            if (utilityType == null || cameraType == null)
+                throw new TypeLoadException("UnityEngine.RectTransformUtility or UnityEngine.Camera was not found.");
+            var positionType = worldPosition.GetType();
+            var method = utilityType?.GetMethod("WorldToScreenPoint",
+                BindingFlags.Public | BindingFlags.Static, null, new[] { cameraType, positionType }, null);
+            if (method == null) throw new MissingMethodException(utilityType?.FullName, "WorldToScreenPoint(Camera, Vector3)");
+
+            object camera = null;
+            var canvasType = GetType("UnityEngine.Canvas");
+            var canvas = GetComponentInParent(component, canvasType);
+            if (canvas == null)
+                throw new InvalidOperationException("The player's profile image is not under a Canvas.");
+            var renderMode = canvas?.GetType().GetProperty("renderMode")?.GetValue(canvas)?.ToString();
+            if (renderMode != "ScreenSpaceOverlay")
+                camera = canvas?.GetType().GetProperty("worldCamera")?.GetValue(canvas);
+            if (renderMode != "ScreenSpaceOverlay" && camera == null)
+                throw new InvalidOperationException($"The player's profile Canvas uses {renderMode} without a world camera.");
+            return method.Invoke(null, new[] { camera, worldPosition });
+        }
+
+        private static float GetVectorComponent(object vector, string component)
+        {
+            if (vector == null) throw new ArgumentNullException(nameof(vector));
+            var type = vector.GetType();
+            var property = type.GetProperty(component, BindingFlags.Public | BindingFlags.Instance);
+            var field = type.GetField(component, BindingFlags.Public | BindingFlags.Instance);
+            var value = property?.GetValue(vector) ?? field?.GetValue(vector);
+            if (value == null) throw new MissingMemberException(type.FullName, component);
+            return Convert.ToSingle(value);
+        }
+
+        private static object GetComponentInParent(object component, Type componentType)
+        {
+            if (component == null || componentType == null) return null;
+            var methods = component.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance);
+            var generic = methods.FirstOrDefault(method =>
+                method.Name == "GetComponentInParent" && method.IsGenericMethodDefinition &&
+                method.GetGenericArguments().Length == 1 && method.GetParameters().Length == 0);
+            if (generic != null)
+                return generic.MakeGenericMethod(componentType).Invoke(component, null);
+            var typed = methods.FirstOrDefault(method =>
+                method.Name == "GetComponentInParent" && !method.IsGenericMethod &&
+                method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType == typeof(Type));
+            return typed?.Invoke(component, new object[] { componentType });
         }
 
         private void RefreshExpCounter()
         {
-            ApplyFallbackPosition();
-
             var players = FindObjectsOfType("CFieldPlayer");
             Array.Sort(players, (a, b) => ((int)GetProp(a, "mIndex")).CompareTo((int)GetProp(b, "mIndex")));
             if (!_hasLoggedExpRefresh)
@@ -317,36 +437,42 @@ namespace DescriptiveElements
                 _hasLoggedExpRefresh = true;
             }
 
-            var fallbackText = new StringBuilder();
-            fallbackText.AppendLine("EXP Counter");
-
             foreach (var p in players)
             {
                 var playerIndex = (int)GetProp(p, "mIndex");
 
                 try
                 {
+                    if (!_expPanels.ContainsKey(playerIndex))
+                        CreateExpCounterPanel(playerIndex);
+                    UpdateExpCounterPosition(p, playerIndex);
+
                     var mParam = GetProp(p, "mParam");
                     var mLv = GetProp(mParam, "mLv");
                     var mExp = GetProp(mParam, "mExp");
-                    int lv = (int)mLv.GetType().GetMethod("Get").Invoke(mLv, null);
-                    int exp = (int)mExp.GetType().GetMethod("Get").Invoke(mExp, null);
+                    var getFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+                    var getLevel = mLv.GetType().GetMethod("Get", getFlags, null, Type.EmptyTypes, null)
+                        ?? throw new MissingMethodException(mLv.GetType().FullName, "Get()");
+                    var getExp = mExp.GetType().GetMethod("Get", getFlags, null, Type.EmptyTypes, null)
+                        ?? throw new MissingMethodException(mExp.GetType().FullName, "Get()");
+                    int lv = Convert.ToInt32(getLevel.Invoke(mLv, null));
+                    int exp = Convert.ToInt32(getExp.Invoke(mExp, null));
 
                     var levelData = CallStatic(GetType("CMaster_CharLevel"), "GetData", lv + 1);
                     int need = levelData != null ? (int)GetProp(levelData, "exp") : 0;
                     bool haveData = need > 0;
                     string needStr = haveData ? need.ToString() : "?";
-                    string name = p.GetType().GetMethod("Name", Type.EmptyTypes)?.Invoke(p, null)?.ToString() ?? "?";
-                    fallbackText.AppendFormat("P{0} {1}: EXP {2} / {3}\n", playerIndex, name, exp, needStr);
+                    SetProp(_expTexts[playerIndex], "text", $"EXP {exp} / {needStr}");
+                    _expCounterErrors.Remove(playerIndex);
                 }
                 catch (Exception ex)
                 {
-                    fallbackText.AppendFormat("P{0}: (error: {1})\n", playerIndex, ex.Message);
+                    if (_expPanels.ContainsKey(playerIndex))
+                        SetProp(_expTexts[playerIndex], "text", "EXP unavailable");
+                    if (_expCounterErrors.Add(playerIndex))
+                        Log.LogWarning($"[{PluginName}] Could not update player {playerIndex} EXP counter: {ex}");
                 }
             }
-
-            if (_expText != null)
-                SetProp(_expText, "text", fallbackText.ToString());
         }
 
         private object[] FindObjectsOfType(string typeName)
