@@ -16,7 +16,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.5";
+        public const string PluginVersion = "2.0.6";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -35,12 +35,12 @@ namespace DescriptiveElements
         private readonly Dictionary<int, object> _expPanels = new Dictionary<int, object>();
         private readonly Dictionary<int, object> _expTexts = new Dictionary<int, object>();
         private readonly HashSet<int> _expCounterErrors = new HashSet<int>();
+        private readonly HashSet<int> _loggedExpCounterRows = new HashSet<int>();
         private readonly Stopwatch _sw = Stopwatch.StartNew();
         private long _lastRefreshTicks;
         private bool _expCounterSetupAttempted;
         private bool _hasLoggedExpRefreshError;
         private bool _hasLoggedExpRefresh;
-        private bool _hasLoggedExpAnchorFallback;
 
         public override void Load()
         {
@@ -304,6 +304,7 @@ namespace DescriptiveElements
             SetProp(panelRect, "anchorMax", CreateVector2(vector2Type, 0f, 0f));
             SetProp(panelRect, "pivot", CreateVector2(vector2Type, 0.5f, 0.5f));
             SetProp(panelRect, "sizeDelta", CreateVector2(vector2Type, 190f, 30f));
+            SetPanelScreenAnchor(panelRect, playerIndex, vector2Type);
 
             var panelImage = AddComponent(panel, imageType);
             var panelColor = playerIndex switch
@@ -327,104 +328,41 @@ namespace DescriptiveElements
 
             _expPanels[playerIndex] = panel;
             _expTexts[playerIndex] = text;
+            Log.LogInfo($"[Descriptive Elements] Created EXP counter label for player slot {playerIndex + 1}.");
             return panelRect;
         }
 
-        private void UpdateExpCounterPosition(object player, int playerIndex)
+        private void SetPanelScreenAnchor(object panelRect, int playerIndex, Type vector2Type)
         {
-            if (!_expPanels.TryGetValue(playerIndex, out var panel) || panel == null) return;
-
             var screenType = GetType("UnityEngine.Screen");
-            var vector2Type = GetType("UnityEngine.Vector2");
             if (screenType == null || vector2Type == null)
                 throw new TypeLoadException("UnityEngine.Screen or Vector2 was not found.");
 
             var width = Convert.ToSingle(GetStaticProp(screenType, "width"));
             var height = Convert.ToSingle(GetStaticProp(screenType, "height"));
-            var x = width * (playerIndex switch { 0 => 0.07f, 1 => 0.308f, 2 => 0.545f, _ => 0.07f });
-            var y = height * 0.245f;
-
-            try
-            {
-                var easyUI = GetProp(player, "mEasyUI");
-                var faceImage = easyUI == null ? null : GetProp(easyUI, "mUIFace");
-                if (faceImage != null)
-                {
-                    var rectTransformType = GetType("UnityEngine.RectTransform");
-                    var faceRect = GetComponent(faceImage, rectTransformType);
-                    if (faceRect == null)
-                        throw new InvalidOperationException("The player's profile image has no RectTransform.");
-                    var worldPosition = GetProp(faceRect, "position");
-                    var screenPosition = WorldToScreenPoint(faceImage, worldPosition);
-                    if (screenPosition != null)
-                    {
-                        x = GetVectorComponent(screenPosition, "x");
-                        y = GetVectorComponent(screenPosition, "y") + 42f;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                if (!_hasLoggedExpAnchorFallback)
-                    Log.LogWarning($"[{PluginName}] Could not anchor EXP labels to player portraits; using seat positions: {ex}");
-                _hasLoggedExpAnchorFallback = true;
-            }
-
-            x += width * ExpCounterX.Value / 1000f;
-            y += height * ExpCounterY.Value / 1000f;
-            var rect = GetComponent(panel, GetType("UnityEngine.RectTransform"));
-            SetProp(rect, "anchoredPosition", CreateVector2(vector2Type, x, y));
+            var xAnchor = playerIndex switch { 0 => 0.07f, 1 => 0.308f, 2 => 0.545f, _ => 0.07f };
+            const float yAnchor = 0.245f;
+            SetProp(panelRect, "anchorMin", CreateVector2(vector2Type, xAnchor, yAnchor));
+            SetProp(panelRect, "anchorMax", CreateVector2(vector2Type, xAnchor, yAnchor));
+            SetProp(panelRect, "pivot", CreateVector2(vector2Type, 0.5f, 0.5f));
+            SetProp(panelRect, "anchoredPosition", CreateVector2(vector2Type, width * ExpCounterX.Value / 1000f,
+                height * ExpCounterY.Value / 1000f));
+            Log.LogInfo($"[Descriptive Elements] Player slot {playerIndex + 1} EXP counter anchored at ({xAnchor:P1}, {yAnchor:P1}) screen position.");
         }
 
-        private object WorldToScreenPoint(object component, object worldPosition)
+        private void UpdateExpCounterPosition(int playerIndex)
         {
-            if (worldPosition == null) return null;
-            var utilityType = GetType("UnityEngine.RectTransformUtility");
-            var cameraType = GetType("UnityEngine.Camera");
-            if (utilityType == null || cameraType == null)
-                throw new TypeLoadException("UnityEngine.RectTransformUtility or UnityEngine.Camera was not found.");
-            var positionType = worldPosition.GetType();
-            var method = utilityType?.GetMethod("WorldToScreenPoint",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { cameraType, positionType }, null);
-            if (method == null) throw new MissingMethodException(utilityType?.FullName, "WorldToScreenPoint(Camera, Vector3)");
-
-            object camera = null;
-            var canvasType = GetType("UnityEngine.Canvas");
-            var canvas = GetComponentInParent(component, canvasType);
-            if (canvas == null)
-                throw new InvalidOperationException("The player's profile image is not under a Canvas.");
-            var renderMode = canvas?.GetType().GetProperty("renderMode")?.GetValue(canvas)?.ToString();
-            if (renderMode != "ScreenSpaceOverlay")
-                camera = canvas?.GetType().GetProperty("worldCamera")?.GetValue(canvas);
-            if (renderMode != "ScreenSpaceOverlay" && camera == null)
-                throw new InvalidOperationException($"The player's profile Canvas uses {renderMode} without a world camera.");
-            return method.Invoke(null, new[] { camera, worldPosition });
-        }
-
-        private static float GetVectorComponent(object vector, string component)
-        {
-            if (vector == null) throw new ArgumentNullException(nameof(vector));
-            var type = vector.GetType();
-            var property = type.GetProperty(component, BindingFlags.Public | BindingFlags.Instance);
-            var field = type.GetField(component, BindingFlags.Public | BindingFlags.Instance);
-            var value = property?.GetValue(vector) ?? field?.GetValue(vector);
-            if (value == null) throw new MissingMemberException(type.FullName, component);
-            return Convert.ToSingle(value);
-        }
-
-        private static object GetComponentInParent(object component, Type componentType)
-        {
-            if (component == null || componentType == null) return null;
-            var methods = component.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance);
-            var generic = methods.FirstOrDefault(method =>
-                method.Name == "GetComponentInParent" && method.IsGenericMethodDefinition &&
-                method.GetGenericArguments().Length == 1 && method.GetParameters().Length == 0);
-            if (generic != null)
-                return generic.MakeGenericMethod(componentType).Invoke(component, null);
-            var typed = methods.FirstOrDefault(method =>
-                method.Name == "GetComponentInParent" && !method.IsGenericMethod &&
-                method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType == typeof(Type));
-            return typed?.Invoke(component, new object[] { componentType });
+            if (!_expPanels.TryGetValue(playerIndex, out var panel) || panel == null) return;
+            var vector2Type = GetType("UnityEngine.Vector2");
+            var rectTransformType = GetType("UnityEngine.RectTransform");
+            var panelRect = GetComponent(panel, rectTransformType);
+            if (panelRect == null) throw new InvalidOperationException($"EXP panel for player slot {playerIndex + 1} has no RectTransform.");
+            var screenType = GetType("UnityEngine.Screen");
+            if (screenType == null) throw new TypeLoadException("UnityEngine.Screen was not found.");
+            var width = Convert.ToSingle(GetStaticProp(screenType, "width"));
+            var height = Convert.ToSingle(GetStaticProp(screenType, "height"));
+            SetProp(panelRect, "anchoredPosition", CreateVector2(vector2Type,
+                width * ExpCounterX.Value / 1000f, height * ExpCounterY.Value / 1000f));
         }
 
         private void RefreshExpCounter()
@@ -445,7 +383,7 @@ namespace DescriptiveElements
                 {
                     if (!_expPanels.ContainsKey(playerIndex))
                         CreateExpCounterPanel(playerIndex);
-                    UpdateExpCounterPosition(p, playerIndex);
+                    UpdateExpCounterPosition(playerIndex);
 
                     var mParam = GetProp(p, "mParam");
                     var mLv = GetProp(mParam, "mLv");
@@ -462,7 +400,9 @@ namespace DescriptiveElements
                     int need = levelData != null ? (int)GetProp(levelData, "exp") : 0;
                     bool haveData = need > 0;
                     string needStr = haveData ? need.ToString() : "?";
-                    SetProp(_expTexts[playerIndex], "text", $"EXP {exp} / {needStr}");
+                    SetProp(_expTexts[playerIndex], "text", $"P{playerIndex + 1} EXP {exp} / {needStr}");
+                    if (_loggedExpCounterRows.Add(playerIndex))
+                        Log.LogInfo($"[Descriptive Elements] Player slot {playerIndex + 1} EXP counter updated: {exp} / {needStr}.");
                     _expCounterErrors.Remove(playerIndex);
                 }
                 catch (Exception ex)
