@@ -16,12 +16,13 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.6";
+        public const string PluginVersion = "2.0.8";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
 
         internal ConfigEntry<bool> EnableEventOutcomes { get; private set; }
+        internal ConfigEntry<bool> EnableEventDiagnostics { get; private set; }
         internal ConfigEntry<bool> EnableExpCounter { get; private set; }
         internal ConfigEntry<float> ExpCounterX { get; private set; }
         internal ConfigEntry<float> ExpCounterY { get; private set; }
@@ -30,8 +31,8 @@ namespace DescriptiveElements
         private Harmony _harmony;
         private EventInfo _frameEvent;
         private Delegate _frameHandler;
-        private MethodInfo _playerUpdateMethod;
         private object _expRoot;
+        private bool _expRootActive = true;
         private readonly Dictionary<int, object> _expPanels = new Dictionary<int, object>();
         private readonly Dictionary<int, object> _expTexts = new Dictionary<int, object>();
         private readonly HashSet<int> _expCounterErrors = new HashSet<int>();
@@ -52,6 +53,7 @@ namespace DescriptiveElements
             try
             {
                 EventOutcomePatches.Apply(_harmony);
+                EventDiagnostics.Apply(_harmony);
                 Log.LogInfo($"[{PluginName}] v{PluginVersion} loaded. Harmony patches applied.");
             }
             catch (Exception ex)
@@ -89,6 +91,8 @@ namespace DescriptiveElements
             _lastRefreshTicks = now;
             try
             {
+                UpdateExpCounterVisibility();
+                if (!_expRootActive) return;
                 RefreshExpCounter();
                 _hasLoggedExpRefreshError = false;
             }
@@ -103,6 +107,7 @@ namespace DescriptiveElements
         private void BindConfig()
         {
             EnableEventOutcomes = Config.Bind("General", "EnableEventOutcomes", true, "Show a grant/outcome toast when an event choice is resolved.");
+            EnableEventDiagnostics = Config.Bind("General", "EnableEventDiagnostics", true, "Log event choice, script, branch, dice, and grant details for preview research.");
             EnableExpCounter = Config.Bind("General", "EnableExpCounter", true, "Show the per-character EXP counter overlay.");
             ExpCounterX = Config.Bind("UI", "ExpCounterX", 10f, "Horizontal EXP counter offset from each player profile (screen fraction * 1000).");
             ExpCounterY = Config.Bind("UI", "ExpCounterY", 10f, "Vertical EXP counter offset from each player profile (screen fraction * 1000).");
@@ -133,31 +138,72 @@ namespace DescriptiveElements
                 _frameHandler = null;
             }
 
-            var playerType = GetType("CFieldPlayer");
-            _playerUpdateMethod = playerType?.GetMethod("Update",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                null, Type.EmptyTypes, null);
             var updateCallback = typeof(Plugin).GetMethod(nameof(OnUnityUpdate),
                 BindingFlags.NonPublic | BindingFlags.Static);
-            if (_playerUpdateMethod != null && updateCallback != null)
+            if (updateCallback == null)
+                throw new MissingMethodException(typeof(Plugin).FullName, nameof(OnUnityUpdate));
+
+            var registered = false;
+            foreach (var typeName in new[] { "CFieldMain", "CBattleMain", "CBattleResultMain", "CFieldPlayer" })
+                registered |= PatchUpdateCallback(typeName, updateCallback);
+
+            if (!registered)
+                Log.LogError($"[{PluginName}] Could not register an update callback for the EXP counter.");
+        }
+
+        private bool PatchUpdateCallback(string typeName, MethodInfo callback)
+        {
+            var type = GetType(typeName);
+            var update = type?.GetMethod("Update",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+            if (update == null)
             {
-                try
-                {
-                    _harmony.Patch(_playerUpdateMethod, postfix: new HarmonyMethod(updateCallback));
-                    Log.LogInfo("EXP counter CFieldPlayer.Update callback registered.");
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Log.LogError($"[{PluginName}] Could not patch CFieldPlayer.Update: {ex}");
-                }
+                Log.LogWarning($"[{PluginName}] {typeName}.Update was not found; no EXP update hook was added there.");
+                return false;
             }
 
-            Log.LogError($"[{PluginName}] Could not register the EXP counter update callback. " +
-                         "Neither UnityEngine.Application.onBeforeRender nor CFieldPlayer.Update was available.");
+            try
+            {
+                _harmony.Patch(update, postfix: new HarmonyMethod(callback));
+                Log.LogInfo($"EXP counter {typeName}.Update callback registered.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"[{PluginName}] Could not patch {typeName}.Update: {ex}");
+                return false;
+            }
         }
 
         private static void OnUnityUpdate() => Instance?.Tick();
+
+        private void UpdateExpCounterVisibility()
+        {
+            var fieldMainType = GetType("CFieldMain");
+            var battleMainType = GetType("CBattleMain");
+            if (fieldMainType == null || battleMainType == null)
+                throw new TypeLoadException("CFieldMain or CBattleMain is unavailable; cannot determine battle visibility.");
+
+            var fieldBattle = CallStatic(fieldMainType, "IsBattle");
+            var battleActive = CallStatic(battleMainType, "IsInBattle");
+            if (fieldBattle == null || battleActive == null)
+                throw new InvalidOperationException("The game did not return its current battle state.");
+
+            var resultActive = FindObjectsOfType("CBattleResultMain").Length > 0;
+            var shouldShow = !Convert.ToBoolean(fieldBattle) &&
+                             !Convert.ToBoolean(battleActive) &&
+                             !resultActive;
+            if (shouldShow == _expRootActive) return;
+
+            var setActive = _expRoot.GetType().GetMethod("SetActive",
+                BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(bool) }, null);
+            if (setActive == null)
+                throw new MissingMethodException(_expRoot.GetType().FullName, "SetActive(Boolean)");
+            setActive.Invoke(_expRoot, new object[] { shouldShow });
+            _expRootActive = shouldShow;
+            Log.LogInfo($"[Descriptive Elements] EXP counters {(shouldShow ? "shown" : "hidden")} for the current game phase.");
+        }
 
         private static Type GetType(string name)
         {
@@ -309,10 +355,10 @@ namespace DescriptiveElements
             var panelImage = AddComponent(panel, imageType);
             var panelColor = playerIndex switch
             {
-                0 => CreateColor(colorType, 0.75f, 0.12f, 0.12f, 0.88f),
-                1 => CreateColor(colorType, 0.12f, 0.35f, 0.78f, 0.88f),
-                2 => CreateColor(colorType, 0.12f, 0.58f, 0.2f, 0.88f),
-                _ => CreateColor(colorType, 0.12f, 0.12f, 0.12f, 0.88f)
+                0 => CreateColor(colorType, 0.75f, 0.12f, 0.12f, 0.58f),
+                1 => CreateColor(colorType, 0.12f, 0.35f, 0.78f, 0.58f),
+                2 => CreateColor(colorType, 0.12f, 0.58f, 0.2f, 0.58f),
+                _ => CreateColor(colorType, 0.12f, 0.12f, 0.12f, 0.58f)
             };
             SetProp(panelImage, "color", panelColor);
 

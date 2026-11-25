@@ -5,7 +5,7 @@ Mod project for **Viractal: Will you trust the party?**
 ## Features
 
 - **Event outcome disclosure** — Displays a topmost-screen toast when an event grant is applied, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral.
-- **EXP counter** — Shows each party member's current EXP and the requirement for the next level in a topmost-screen label aligned to that player's red, blue, or green profile slot.
+- **EXP counter** — Shows each party member's current EXP and the requirement for the next level in a topmost-screen label aligned to that player's red, blue, or green profile slot. The colored backgrounds are translucent, and the counters are hidden during battles and battle results.
 
 ## Compatibility
 
@@ -53,6 +53,7 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 | Setting | Default | Meaning |
 |---|---:|---|
 | General > EnableEventOutcomes | true | Show an outcome toast when an event grant is applied. |
+| General > EnableEventDiagnostics | true | Log choice labels, event-script data, interpreter steps, dice checks, and grants for pre-choice preview research. This is verbose; turn it off after collecting a log. |
 | General > EnableExpCounter | true | Show the per-character EXP overlay. |
 | UI > ExpCounterX | 10 | Horizontal offset from each profile portrait (screen fraction × 1000). |
 | UI > ExpCounterY | 10 | Vertical offset from each profile portrait (screen fraction × 1000). |
@@ -63,8 +64,10 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 - Patch targets are discovered from the game's generated IL2CPP interop assemblies by type and method signature. Game updates can rename or change these targets; review `BepInEx/LogOutput.txt` for patch warnings.
 - The next-level requirement is read from `CMaster_CharLevel.GetData(level)`. If the master data is unavailable, the counter shows `?`.
 - Battle outcomes are initiated outside `CEventGrant` and are not individually itemized.
+- EXP counter visibility is polled from the game's field, battle, and battle-result update loops; game updates that change these APIs may require a patch adjustment.
 - Event outcomes are reported after a choice is confirmed and the grant is applied; the mod does not currently predict outcomes beside each option before selection.
 - Pre-choice outcome previews are not implemented. The game's choice callback provides the selected index, while grants are constructed later by the event script; a safe preview needs a reliable mapping from each option to its script branch and grant data.
+- For event-preview research, leave `General > EnableEventDiagnostics` enabled, play until several different event choice menus appear, and send `BepInEx/LogOutput.log`. Diagnostics record the displayed labels and loaded interpreter data when choices open, then the selected index, up to 40 subsequent interpreter steps, dice/random checks, and grants. Disable the setting after collecting the log; logs can grow during a long session.
 - Counter positions use fixed screen anchors aligned to the red, blue, and green profile slots. This avoids dependence on variable character portraits or camera projection.
 - The plugin's runtime behavior still needs to be verified in-game after installing the IL2CPP loader.
 
