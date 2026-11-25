@@ -16,7 +16,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.10";
+        public const string PluginVersion = "2.0.11";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -182,22 +182,16 @@ namespace DescriptiveElements
 
         private void UpdateExpCounterVisibility()
         {
-            var fieldMainType = GetType("CFieldMain");
             var battleMainType = GetType("CBattleMain");
-            if (fieldMainType == null || battleMainType == null)
-                throw new TypeLoadException("CFieldMain or CBattleMain is unavailable; cannot determine battle visibility.");
+            if (battleMainType == null)
+                throw new TypeLoadException("CBattleMain is unavailable; cannot determine battle visibility.");
 
-            var fieldBattle = CallStatic(fieldMainType, "IsBattle");
-            var battleActive = CallStatic(battleMainType, "IsInBattle");
-            if (fieldBattle == null || battleActive == null)
-                throw new InvalidOperationException("The game did not return its current battle state.");
-
+            var battleObjects = FindObjectsOfType(battleMainType);
             var resultObjects = FindObjectsOfType("CBattleResultMain");
+            var battleCanvasVisible = battleObjects.Any(result => IsGameObjectCanvasVisible(result, "m_Canvas"));
             var resultCanvasVisible = resultObjects.Any(IsBattleResultCanvasVisible);
-            var shouldShow = !Convert.ToBoolean(fieldBattle) &&
-                             !Convert.ToBoolean(battleActive) &&
-                             !resultCanvasVisible;
-            var state = $"fieldBattle={fieldBattle}, battleActive={battleActive}, resultObjects={resultObjects.Length}, resultCanvasVisible={resultCanvasVisible}, shouldShow={shouldShow}";
+            var shouldShow = !battleCanvasVisible && !resultCanvasVisible;
+            var state = $"battleObjects={battleObjects.Length}, battleCanvasVisible={battleCanvasVisible}, resultObjects={resultObjects.Length}, resultCanvasVisible={resultCanvasVisible}, shouldShow={shouldShow}";
             if (state != _lastExpVisibilityState)
             {
                 Log.LogInfo($"[Descriptive Elements] EXP visibility state: {state}");
@@ -215,8 +209,11 @@ namespace DescriptiveElements
         }
 
         private static bool IsBattleResultCanvasVisible(object result)
+            => IsGameObjectCanvasVisible(result, "m_Canvas");
+
+        private static bool IsGameObjectCanvasVisible(object owner, string canvasMember)
         {
-            var canvas = ReadRequiredProperty(result, "m_Canvas");
+            var canvas = ReadRequiredProperty(owner, canvasMember);
             if (canvas == null) return false;
 
             var enabled = Convert.ToBoolean(ReadRequiredProperty(canvas, "enabled"));
