@@ -3,16 +3,18 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using HarmonyLib;
 
 namespace DescriptiveElements
 {
     internal static class EventDiagnostics
     {
-        private const int MaxCommandsAfterChoice = 40;
+        private const int MaxDistinctScriptPositionsAfterChoice = 16;
         private static int _choiceId;
         private static int _activeChoiceId;
-        private static int _commandsRemaining;
+        private static int _loggedScriptPositions;
+        private static readonly HashSet<int> LoggedScriptIndices = new HashSet<int>();
 
         internal static void Apply(Harmony harmony)
         {
@@ -27,21 +29,6 @@ namespace DescriptiveElements
                 method => method.GetParameters().Length == 0);
             PatchNamedMethods(harmony, "CEventScript", "ExecCommand", nameof(Postfix_ExecCommand),
                 method => method.GetParameters().Length == 0);
-            PatchNamedMethods(harmony, "CEventScript", "Command_DICE", nameof(Postfix_DiceCommand),
-                method => method.GetParameters().Length == 1);
-            foreach (var methodName in new[]
-                     {
-                         "Command_Random", "Command_Rewards", "Command_Status", "MakeGrantID", "MakeGrantAbility",
-                         "GetRandomNum_Control", "GetRandomNum_OtherControl", "RandomCondition"
-                     })
-                PatchNamedMethods(harmony, "CEventScript", methodName, nameof(Postfix_ScriptCommand), _ => true);
-
-            var grantType = ResolveType("CEventGrant");
-            if (grantType != null)
-            {
-                PatchNamedMethods(harmony, grantType, "Start", nameof(Postfix_Grant), _ => true);
-                PatchNamedMethods(harmony, grantType, "StartDroprank", nameof(Postfix_Grant), _ => true);
-            }
         }
 
         private static void PatchNamedMethods(Harmony harmony, string typeName, string methodName,
@@ -91,7 +78,8 @@ namespace DescriptiveElements
         {
             if (!IsEnabled()) return;
             _activeChoiceId = ++_choiceId;
-            _commandsRemaining = 0;
+            _loggedScriptPositions = 0;
+            LoggedScriptIndices.Clear();
             Plugin.Log.LogInfo($"[Event diagnostics] ===== CHOICE OPEN id={_activeChoiceId} =====");
             if (__args.Length > 0) Plugin.Log.LogInfo($"[Event diagnostics] Choice labels: {Format(__args[0], 80)}");
             LogChoiceState(__instance, "open");
@@ -102,8 +90,9 @@ namespace DescriptiveElements
         {
             if (!IsEnabled()) return;
             var selected = __args.Length > 0 ? Format(__args[0]) : "(missing)";
-            _commandsRemaining = MaxCommandsAfterChoice;
-            Plugin.Log.LogInfo($"[Event diagnostics] CHOICE DECISION id={_activeChoiceId} selected-index={selected}; capturing next {MaxCommandsAfterChoice} interpreter commands.");
+            _loggedScriptPositions = 0;
+            LoggedScriptIndices.Clear();
+            Plugin.Log.LogInfo($"[Event diagnostics] CHOICE DECISION id={_activeChoiceId} selected-index={selected}; capturing up to {MaxDistinctScriptPositionsAfterChoice} distinct script positions.");
             LogChoiceState(__instance, "decision");
             LogScriptState("choice-decision");
         }
@@ -111,40 +100,20 @@ namespace DescriptiveElements
         private static void Postfix_ChoiceCancelled(object __instance)
         {
             if (!IsEnabled()) return;
-            _commandsRemaining = 0;
+            _loggedScriptPositions = 0;
+            LoggedScriptIndices.Clear();
             Plugin.Log.LogInfo($"[Event diagnostics] CHOICE CANCEL id={_activeChoiceId}.");
             LogChoiceState(__instance, "cancel");
         }
 
         private static void Postfix_ExecCommand(object __instance)
         {
-            if (!IsEnabled() || _commandsRemaining <= 0) return;
-            _commandsRemaining--;
-            Plugin.Log.LogInfo($"[Event diagnostics] SCRIPT STEP id={_activeChoiceId} remaining={_commandsRemaining}");
-            LogMembers(__instance, "script-step", new[] { "mExecIndex", "mExecData" });
-        }
-
-        private static void Postfix_DiceCommand(object __instance, object[] __args, object __result)
-        {
-            if (!IsEnabled()) return;
-            Plugin.Log.LogInfo($"[Event diagnostics] DICE COMMAND id={_activeChoiceId} args={Format(__args, 16)} result={Format(__result)}");
-            LogScriptObject(__instance, "dice");
-        }
-
-        private static void Postfix_ScriptCommand(object __instance, object[] __args,
-            MethodBase __originalMethod, object __result)
-        {
-            if (!IsEnabled()) return;
-            Plugin.Log.LogInfo($"[Event diagnostics] SCRIPT COMMAND id={_activeChoiceId} method={__originalMethod.Name} args={Format(__args, 24)} result={Format(__result)}");
-            LogScriptObject(__instance, __originalMethod.Name);
-        }
-
-        private static void Postfix_Grant(object __instance, object[] __args, MethodBase __originalMethod)
-        {
-            if (!IsEnabled()) return;
-            Plugin.Log.LogInfo($"[Event diagnostics] GRANT id={_activeChoiceId} method={__originalMethod.Name} args={Format(__args, 32)}");
-            LogMembers(__instance, "grant-instance", new[] { "mType", "mPairList", "mIDs", "mAdd", "mBonusGold", "mTargetPlayer", "mExecPlayer" });
-            LogScriptState("grant");
+            if (!IsEnabled() || _loggedScriptPositions >= MaxDistinctScriptPositionsAfterChoice) return;
+            var index = ReadInt(__instance, "mExecIndex");
+            if (index < 0 || !LoggedScriptIndices.Add(index)) return;
+            _loggedScriptPositions++;
+            Plugin.Log.LogInfo($"[Event diagnostics] SCRIPT POSITION id={_activeChoiceId} unique={_loggedScriptPositions}/{MaxDistinctScriptPositionsAfterChoice}");
+            LogMembers(__instance, "script-step", new[] { "mExecIndex", "mCommand", "mExecData" });
         }
 
         private static void LogChoiceState(object choice, string phase)
@@ -199,9 +168,8 @@ namespace DescriptiveElements
             }
             LogMembers(script, $"script-{phase}", new[]
             {
-                "mExecIndex", "mExecData", "mCommand", "mExecStack", "mEventData",
-                "mTimingEventID", "mEventChoices", "mSelfChoice", "mSelfLines", "mEventGrant",
-                "mDiceText", "mAddressablePath", "mSyncName", "mSyncCount"
+                "mExecIndex", "mCommand", "mExecData", "mExecStack", "mSelfChoice",
+                "mSelfLines", "mAddressablePath", "mSyncName", "mSyncCount"
             });
         }
 
@@ -222,18 +190,10 @@ namespace DescriptiveElements
                     if (name == "mExecData")
                     {
                         var index = ReadInt(instance, "mExecIndex");
-                        if (label == "script-choice-open" || label == "script-choice-decision")
-                            LogFullIndexedArray(value, index, label, name);
-                        else
-                        {
-                            var isStep = label == "script-step";
-                            Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: {FormatIndexedArray(value, index, isStep ? 8 : 36, isStep ? 24 : 60)}");
-                        }
+                        Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: {FormatIndexedArray(value, index, 16, 48)}");
                     }
                     else if (name == "mCommand")
                         Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: {FormatCollection(value, 200)}");
-                    else if (name == "mEventData")
-                        Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: {FormatDictionary(value, 120)}");
                     else if (name == "mExecStack" || name == "mSelfChoice" || name == "mMenus" ||
                              name == "mDpData" || name == "mList_SkillAbilityData")
                         Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: {FormatCollection(value, 24)}");
@@ -245,31 +205,6 @@ namespace DescriptiveElements
                     Plugin.Log.LogWarning($"[Event diagnostics] Could not read {label}.{name}: {ex.Message}");
                 }
             }
-        }
-
-        private static void LogFullIndexedArray(object value, int center, string label, string name)
-        {
-            var count = GetCount(value);
-            if (count < 0)
-            {
-                Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: {Format(value, 1200)}");
-                return;
-            }
-
-            const int maximumItems = 8192;
-            const int chunkSize = 128;
-            var loggedCount = Math.Min(count, maximumItems);
-            Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}: type={value.GetType().FullName} length={count} center={center}; logging {loggedCount} indexed entries.");
-            for (var start = 0; start < loggedCount; start += chunkSize)
-            {
-                var end = Math.Min(loggedCount, start + chunkSize);
-                var entries = new List<string>(end - start);
-                for (var index = start; index < end; index++)
-                    entries.Add($"{index}{(index == center ? "*" : "")}:{Format(GetItem(value, index), 100)}");
-                Plugin.Log.LogInfo($"[Event diagnostics] {label}.{name}[{start}..{end - 1}]: {string.Join(", ", entries)}");
-            }
-            if (count > loggedCount)
-                Plugin.Log.LogWarning($"[Event diagnostics] {label}.{name} truncated; {count - loggedCount} entries were not logged.");
         }
 
         private static void LogMethodResult(object instance, string name, string label)
@@ -295,28 +230,14 @@ namespace DescriptiveElements
             var start = center < 0 ? 0 : Math.Max(0, center - before);
             var end = center < 0 ? Math.Min(count, after) : Math.Min(count, center + after);
             var entries = new List<string>();
+            var characters = new StringBuilder(end - start);
             for (var index = start; index < end; index++)
             {
-                var item = GetItem(value, index);
-                entries.Add($"{index}{(index == center ? "*" : "")}:{Format(item, 100)}");
+                var character = Convert.ToInt32(GetItem(value, index));
+                entries.Add($"{index}{(index == center ? "*" : "")}:{character}");
+                characters.Append(character >= 32 && character <= 126 ? (char)character : '.');
             }
-            return $"type={value.GetType().FullName} length={count} center={center} [{string.Join(", ", entries)}]";
-        }
-
-        private static string FormatDictionary(object value, int maximum)
-        {
-            if (value is not IEnumerable enumerable) return Format(value, 1200);
-            var entries = new List<string>();
-            var total = 0;
-            foreach (var item in enumerable)
-            {
-                total++;
-                if (entries.Count >= maximum) continue;
-                var key = ReadMember(item, "Key");
-                var entryValue = ReadMember(item, "Value");
-                entries.Add($"{Format(key, 120)} => {FormatCollection(entryValue, 12)}");
-            }
-            return $"type={value.GetType().FullName} entries={total} [{string.Join(" | ", entries)}]";
+            return $"type={value.GetType().FullName} length={count} center={center} ascii=\"{characters}\" bytes=[{string.Join(", ", entries)}]";
         }
 
         private static string FormatCollection(object value, int maximum)
@@ -336,6 +257,14 @@ namespace DescriptiveElements
             if (value == null) return "(null)";
             if (value is string text) return Truncate($"\"{text.Replace("\r", "\\r").Replace("\n", "\\n")}\"", maximum);
             var type = value.GetType();
+            if (type.Name.StartsWith("Tuple`", StringComparison.Ordinal))
+            {
+                var values = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(property => property.Name.StartsWith("Item", StringComparison.Ordinal))
+                    .OrderBy(property => property.Name, StringComparer.Ordinal)
+                    .Select(property => Format(property.GetValue(value), 120));
+                return Truncate($"({string.Join(", ", values)})", maximum);
+            }
             if (type.IsPrimitive || type.IsEnum || value is decimal)
                 return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
 

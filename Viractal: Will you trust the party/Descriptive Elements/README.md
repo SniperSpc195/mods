@@ -53,7 +53,7 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 | Setting | Default | Meaning |
 |---|---:|---|
 | General > EnableEventOutcomes | true | Show an outcome toast when an event grant is applied. |
-| General > EnableEventDiagnostics | true | Log choice labels, event-script data, interpreter steps, dice checks, and grants for pre-choice preview research. This is verbose; turn it off after collecting a log. |
+| General > EnableEventDiagnostics | false | Log choice labels, nearby script bytes, and up to 16 distinct interpreter positions after selection. Enable only for offline/single-player diagnostics; turn off for multiplayer. |
 | General > EnableExpCounter | true | Show the per-character EXP overlay. |
 | UI > ExpCounterX | 10 | Horizontal offset from each profile portrait (screen fraction × 1000). |
 | UI > ExpCounterY | 10 | Vertical offset from each profile portrait (screen fraction × 1000). |
@@ -67,7 +67,7 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 - EXP counter visibility is polled from the game's field, battle, and battle-result update loops; game updates that change these APIs may require a patch adjustment.
 - Event outcomes are reported after a choice is confirmed and the grant is applied; the mod does not currently predict outcomes beside each option before selection.
 - Pre-choice outcome previews are not implemented. The game's choice callback provides the selected index, while grants are constructed later by the event script; a safe preview needs a reliable mapping from each option to its script branch and grant data.
-- For event-preview research, leave `General > EnableEventDiagnostics` enabled, play until several different event choice menus appear, and send `BepInEx/LogOutput.log`. Diagnostics record the displayed labels and loaded interpreter data when choices open, then the selected index, up to 40 subsequent interpreter steps, dice/random checks, and grants. Disable the setting after collecting the log; logs can grow during a long session.
+- For event-preview research, enable `General > EnableEventDiagnostics` only in an offline/single-player session, play until several different event choice menus appear, and send `BepInEx/LogOutput.log`. Diagnostics record choice labels, a small script-byte window, and up to 16 distinct script positions after selection. Do not use diagnostics in multiplayer; logging while the game is executing synchronized event scripts can cause timing problems.
 - Counter positions use fixed screen anchors aligned to the red, blue, and green profile slots. This avoids dependence on variable character portraits or camera projection.
 - The plugin's runtime behavior still needs to be verified in-game after installing the IL2CPP loader.
 

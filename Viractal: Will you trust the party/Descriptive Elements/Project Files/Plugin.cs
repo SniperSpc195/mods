@@ -16,7 +16,7 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.8";
+        public const string PluginVersion = "2.0.10";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
@@ -33,6 +33,7 @@ namespace DescriptiveElements
         private Delegate _frameHandler;
         private object _expRoot;
         private bool _expRootActive = true;
+        private string _lastExpVisibilityState;
         private readonly Dictionary<int, object> _expPanels = new Dictionary<int, object>();
         private readonly Dictionary<int, object> _expTexts = new Dictionary<int, object>();
         private readonly HashSet<int> _expCounterErrors = new HashSet<int>();
@@ -53,7 +54,8 @@ namespace DescriptiveElements
             try
             {
                 EventOutcomePatches.Apply(_harmony);
-                EventDiagnostics.Apply(_harmony);
+                if (EnableEventDiagnostics.Value)
+                    EventDiagnostics.Apply(_harmony);
                 Log.LogInfo($"[{PluginName}] v{PluginVersion} loaded. Harmony patches applied.");
             }
             catch (Exception ex)
@@ -107,7 +109,7 @@ namespace DescriptiveElements
         private void BindConfig()
         {
             EnableEventOutcomes = Config.Bind("General", "EnableEventOutcomes", true, "Show a grant/outcome toast when an event choice is resolved.");
-            EnableEventDiagnostics = Config.Bind("General", "EnableEventDiagnostics", true, "Log event choice, script, branch, dice, and grant details for preview research.");
+            EnableEventDiagnostics = Config.Bind("General", "EnableEventDiagnostics", false, "Log event choice and a limited number of distinct script positions for preview research.");
             EnableExpCounter = Config.Bind("General", "EnableExpCounter", true, "Show the per-character EXP counter overlay.");
             ExpCounterX = Config.Bind("UI", "ExpCounterX", 10f, "Horizontal EXP counter offset from each player profile (screen fraction * 1000).");
             ExpCounterY = Config.Bind("UI", "ExpCounterY", 10f, "Vertical EXP counter offset from each player profile (screen fraction * 1000).");
@@ -190,10 +192,17 @@ namespace DescriptiveElements
             if (fieldBattle == null || battleActive == null)
                 throw new InvalidOperationException("The game did not return its current battle state.");
 
-            var resultActive = FindObjectsOfType("CBattleResultMain").Length > 0;
+            var resultObjects = FindObjectsOfType("CBattleResultMain");
+            var resultCanvasVisible = resultObjects.Any(IsBattleResultCanvasVisible);
             var shouldShow = !Convert.ToBoolean(fieldBattle) &&
                              !Convert.ToBoolean(battleActive) &&
-                             !resultActive;
+                             !resultCanvasVisible;
+            var state = $"fieldBattle={fieldBattle}, battleActive={battleActive}, resultObjects={resultObjects.Length}, resultCanvasVisible={resultCanvasVisible}, shouldShow={shouldShow}";
+            if (state != _lastExpVisibilityState)
+            {
+                Log.LogInfo($"[Descriptive Elements] EXP visibility state: {state}");
+                _lastExpVisibilityState = state;
+            }
             if (shouldShow == _expRootActive) return;
 
             var setActive = _expRoot.GetType().GetMethod("SetActive",
@@ -203,6 +212,29 @@ namespace DescriptiveElements
             setActive.Invoke(_expRoot, new object[] { shouldShow });
             _expRootActive = shouldShow;
             Log.LogInfo($"[Descriptive Elements] EXP counters {(shouldShow ? "shown" : "hidden")} for the current game phase.");
+        }
+
+        private static bool IsBattleResultCanvasVisible(object result)
+        {
+            var canvas = ReadRequiredProperty(result, "m_Canvas");
+            if (canvas == null) return false;
+
+            var enabled = Convert.ToBoolean(ReadRequiredProperty(canvas, "enabled"));
+            var gameObject = ReadRequiredProperty(canvas, "gameObject");
+            var activeInHierarchy = gameObject != null &&
+                                    Convert.ToBoolean(ReadRequiredProperty(gameObject, "activeInHierarchy"));
+            return enabled && activeInHierarchy;
+        }
+
+        private static object ReadRequiredProperty(object target, string name)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target), $"Cannot read '{name}' from a null object.");
+            var property = target.GetType().GetProperty(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static |
+                BindingFlags.FlattenHierarchy);
+            if (property?.GetMethod == null)
+                throw new MissingMemberException(target.GetType().FullName, name);
+            return property.GetValue(property.GetMethod.IsStatic ? null : target);
         }
 
         private static Type GetType(string name)
