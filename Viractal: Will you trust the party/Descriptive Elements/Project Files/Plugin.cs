@@ -16,13 +16,14 @@ namespace DescriptiveElements
     {
         public const string PluginGUID = "com.kdubaz.descriptiveelements";
         public const string PluginName = "Descriptive Elements";
-        public const string PluginVersion = "2.0.11";
+        public const string PluginVersion = "2.0.13";
 
         internal static Plugin Instance { get; private set; }
         internal new static ManualLogSource Log { get; private set; }
 
         internal ConfigEntry<bool> EnableEventOutcomes { get; private set; }
         internal ConfigEntry<bool> EnableEventDiagnostics { get; private set; }
+        internal ConfigEntry<bool> EnableEventPreviews { get; private set; }
         internal ConfigEntry<bool> EnableExpCounter { get; private set; }
         internal ConfigEntry<float> ExpCounterX { get; private set; }
         internal ConfigEntry<float> ExpCounterY { get; private set; }
@@ -54,6 +55,8 @@ namespace DescriptiveElements
             try
             {
                 EventOutcomePatches.Apply(_harmony);
+                if (EnableEventPreviews.Value)
+                    EventPreviewCache.Apply(_harmony);
                 if (EnableEventDiagnostics.Value)
                     EventDiagnostics.Apply(_harmony);
                 Log.LogInfo($"[{PluginName}] v{PluginVersion} loaded. Harmony patches applied.");
@@ -72,6 +75,7 @@ namespace DescriptiveElements
         {
             if (_frameEvent != null && _frameHandler != null)
                 _frameEvent.RemoveEventHandler(null, _frameHandler);
+            EventPreviewCache.Shutdown();
             _harmony?.UnpatchSelf();
             if (_expRoot != null) DestroyUnityObject(_expRoot);
             Instance = null;
@@ -110,6 +114,7 @@ namespace DescriptiveElements
         {
             EnableEventOutcomes = Config.Bind("General", "EnableEventOutcomes", true, "Show a grant/outcome toast when an event choice is resolved.");
             EnableEventDiagnostics = Config.Bind("General", "EnableEventDiagnostics", false, "Log event choice and a limited number of distinct script positions for preview research.");
+            EnableEventPreviews = Config.Bind("General", "EnableEventPreviews", true, "Show stored outcomes for event choices and save observed results locally.");
             EnableExpCounter = Config.Bind("General", "EnableExpCounter", true, "Show the per-character EXP counter overlay.");
             ExpCounterX = Config.Bind("UI", "ExpCounterX", 10f, "Horizontal EXP counter offset from each player profile (screen fraction * 1000).");
             ExpCounterY = Config.Bind("UI", "ExpCounterY", 10f, "Vertical EXP counter offset from each player profile (screen fraction * 1000).");

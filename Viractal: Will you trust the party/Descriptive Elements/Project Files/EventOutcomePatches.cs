@@ -103,17 +103,21 @@ namespace DescriptiveElements
 
         private static bool Prefix_Grant_Int(object __instance, object[] __args)
         {
-            if (!Plugin.Instance.EnableEventOutcomes.Value) return true;
             try
             {
                 var typeObj = __args[0];
                 var add = Convert.ToInt32(__args[1]);
                 var bonus = Convert.ToInt32(__args[2]);
                 var sb = new StringBuilder();
-                sb.Append(typeObj).Append(" +").Append(add);
-                if (bonus != 0) sb.Append(" (bonus +").Append(bonus).Append(")");
+                var outcomeText = new StringBuilder();
+                outcomeText.Append(typeObj).Append(' ').Append(FormatSigned(add));
+                if (bonus != 0) outcomeText.Append(" (bonus ").Append(FormatSigned(bonus)).Append(')');
+                sb.Append(outcomeText);
                 sb.Append(" | ").Append(PlayerInfo(__instance)).Append(ChoiceSuffix());
-                ShowGrantToast(sb.ToString(), Classify(typeObj));
+                var classification = Classify(typeObj, (long)add + bonus);
+                EventPreviewCache.RecordOutcome(outcomeText.ToString(), classification);
+                if (Plugin.Instance.EnableEventOutcomes.Value)
+                    ShowGrantToast(sb.ToString(), classification);
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[DE] Prefix_Grant_Int: {ex}"); }
             return true;
@@ -121,33 +125,37 @@ namespace DescriptiveElements
 
         private static bool Prefix_Grant_List(object __instance, object[] __args)
         {
-            if (!Plugin.Instance.EnableEventOutcomes.Value) return true;
             try
             {
                 var typeObj = __args[0];
                 var list = EnumerateCollection(__args[1]).ToArray();
                 var sb = new StringBuilder();
-                sb.Append(typeObj);
+                var outcomeText = new StringBuilder();
+                outcomeText.Append(typeObj);
                 if (list.Length > 0)
                 {
                     for (int i = 0; i < list.Length; i++)
                     {
-                        if (i > 0) sb.Append(", ");
+                        if (i > 0) outcomeText.Append(", ");
                         if (list[i] is string id)
                         {
-                            sb.Append(ResolveItemName(id));
+                            outcomeText.Append(ResolveItemName(id));
                         }
                         else
                         {
                             var pair = ReadPairStrInt(list[i]);
-                            sb.Append(ResolveItemName(pair.id));
-                            if (pair.count != 0) sb.Append(" x").Append(pair.count);
+                            outcomeText.Append(ResolveItemName(pair.id));
+                            if (pair.count != 0) outcomeText.Append(" x").Append(pair.count);
                         }
                     }
                 }
-                else sb.Append(" (none)");
+                else outcomeText.Append(" (none)");
+                sb.Append(outcomeText);
                 sb.Append(" | ").Append(PlayerInfo(__instance)).Append(ChoiceSuffix());
-                ShowGrantToast(sb.ToString(), Classify(typeObj));
+                var classification = Classify(typeObj);
+                EventPreviewCache.RecordOutcome(outcomeText.ToString(), classification);
+                if (Plugin.Instance.EnableEventOutcomes.Value)
+                    ShowGrantToast(sb.ToString(), classification);
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[DE] Prefix_Grant_List: {ex}"); }
             return true;
@@ -256,15 +264,36 @@ namespace DescriptiveElements
             }
         }
 
-        private static string Classify(object typeObj)
+        private static string FormatSigned(int value) => value > 0 ? $"+{value}" : value.ToString();
+
+        private static string Classify(object typeObj, long? change = null)
         {
             var typeStr = typeObj?.ToString() ?? "";
-            var good = new[] { "Grant_Item", "Grant_Card", "Grant_Ability", "Grant_Condition", "Money",
-                "HP_Num", "HP_Per", "MaxHP", "Speed", "Dp", "NoText_Dp", "Exp", "DropRank_Money" };
-            var bad = new[] { "Erase_Item", "Erase_Card", "Erase_Ability", "Erase_Condition",
-                "Reset_MaxHP", "Reset_Speed" };
-            if (Array.IndexOf(good, typeStr) >= 0) return "good";
-            if (Array.IndexOf(bad, typeStr) >= 0) return "bad";
+            switch (typeStr)
+            {
+                case "HP_Num":
+                case "HP_Per":
+                case "MaxHP":
+                case "Money":
+                case "Speed":
+                case "Dp":
+                case "NoText_Dp":
+                case "Exp":
+                case "DropRank_Money":
+                    return change > 0 ? "good" : change < 0 ? "bad" : "neutral";
+                case "Grant_Item":
+                case "Grant_Card":
+                case "Grant_Ability":
+                case "Grant_Condition":
+                    return "good";
+                case "Erase_Item":
+                case "Erase_Card":
+                case "Erase_Ability":
+                case "Erase_Condition":
+                case "Reset_MaxHP":
+                case "Reset_Speed":
+                    return "bad";
+            }
             return "neutral";
         }
 

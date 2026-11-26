@@ -4,7 +4,8 @@ Mod project for **Viractal: Will you trust the party?**
 
 ## Features
 
-- **Event outcome disclosure** — Displays a topmost-screen toast when an event grant is applied, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral.
+- **Event outcome disclosure** — Displays a topmost-screen toast when an event grant is applied, including items, currency, EXP, DP, HP, speed, drop-rank, conditions, and abilities. It also shows the choice index and whether the outcome is generally good, bad, or neutral; signed numeric grant deltas are classified by whether they increase or decrease the resource.
+- **Event outcome previews** — Saves observed grants locally and displays cached results next to event choices when the same script choice appears again. Unobserved choices and dice results are marked unknown; dice and battle indicators are recorded when those script commands run.
 - **EXP counter** — Shows each party member's current EXP and the requirement for the next level in a topmost-screen label aligned to that player's red, blue, or green profile slot. The colored backgrounds are translucent, and the counters are hidden during battles and battle results.
 
 ## Compatibility
@@ -54,6 +55,7 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 |---|---:|---|
 | General > EnableEventOutcomes | true | Show an outcome toast when an event grant is applied. |
 | General > EnableEventDiagnostics | false | Log choice labels, nearby script bytes, and up to 16 distinct interpreter positions after selection. Enable only for offline/single-player diagnostics; turn off for multiplayer. |
+| General > EnableEventPreviews | true | Show cached event outcomes and save observed grants in `BepInEx/config/DescriptiveElements.EventCache.json`. |
 | General > EnableExpCounter | true | Show the per-character EXP overlay. |
 | UI > ExpCounterX | 10 | Horizontal offset from each profile portrait (screen fraction × 1000). |
 | UI > ExpCounterY | 10 | Vertical offset from each profile portrait (screen fraction × 1000). |
@@ -66,7 +68,7 @@ The plugin writes `BepInEx/config/com.kdubaz.descriptiveelements.cfg` on first l
 - Battle outcomes are initiated outside `CEventGrant` and are not individually itemized.
 - EXP counter visibility follows whether the battle or battle-results Canvas is enabled and active, rather than relying on static battle flags that may be stale during new-game startup. Game updates that change these APIs may require a patch adjustment.
 - Event outcomes are reported after a choice is confirmed and the grant is applied; the mod does not currently predict outcomes beside each option before selection.
-- Pre-choice outcome previews are not implemented. The game's choice callback provides the selected index, while grants are constructed later by the event script; a safe preview needs a reliable mapping from each option to its script branch and grant data.
+- Preview data is learned from choices that have actually been played and is stored in `BepInEx/config/DescriptiveElements.EventCache.json`. Outcomes and dice/battle indicators for unobserved branches remain unknown; the cache does not claim to reveal every possible result.
 - For event-preview research, enable `General > EnableEventDiagnostics` only in an offline/single-player session, play until several different event choice menus appear, and send `BepInEx/LogOutput.log`. Diagnostics record choice labels, a small script-byte window, and up to 16 distinct script positions after selection. Do not use diagnostics in multiplayer; logging while the game is executing synchronized event scripts can cause timing problems.
 - Counter positions use fixed screen anchors aligned to the red, blue, and green profile slots. This avoids dependence on variable character portraits or camera projection.
 - The plugin's runtime behavior still needs to be verified in-game after installing the IL2CPP loader.
